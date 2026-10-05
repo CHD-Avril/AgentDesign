@@ -1,0 +1,12 @@
+# 密钥与本地生成物不入库
+.env
+__pycache__/
+*.pyc
+workspace/
+.pytest_cache/
+*.egg-info/
+.idea/
+.vscode/
+
+# 运行日志不入库
+*.log
