@@ -14,7 +14,7 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-from .base import LLMClient, LLMResponse, ToolCall
+from .base import LLMClient, LLMResponse, TokenUsage, ToolCall
 
 
 class QwenClient(LLMClient):
@@ -172,11 +172,25 @@ class QwenClient(LLMClient):
                 args = {"_raw": raw_args}
             tool_calls.append(ToolCall(id=tc.get("id", ""), name=fn.get("name", ""), arguments=args))
 
+        usage = QwenClient._parse_usage(data.get("usage"))
+
         return LLMResponse(
             content=message.get("content") or "",
             tool_calls=tool_calls,
             finish_reason=choice.get("finish_reason", ""),
             raw=data,
+            usage=usage,
+        )
+
+    @staticmethod
+    def _parse_usage(data: dict | None) -> TokenUsage:
+        """从 API 返回的 usage 字段解析 token 用量。"""
+        if not data:
+            return TokenUsage()
+        return TokenUsage(
+            prompt_tokens=data.get("prompt_tokens", 0),
+            completion_tokens=data.get("completion_tokens", 0),
+            total_tokens=data.get("total_tokens", 0),
         )
 
     @staticmethod
@@ -185,10 +199,14 @@ class QwenClient(LLMClient):
         content_parts: list[str] = []
         tool_calls: dict[int, dict[str, str]] = {}
         finish_reason = ""
+        usage_data: dict[str, Any] | None = None
 
         for chunk in chunks:
             choices = chunk.get("choices") or []
             if not choices:
+                # usage 通常在没有 choices 的最后一个 chunk 里
+                if chunk.get("usage"):
+                    usage_data = chunk["usage"]
                 continue
             choice = choices[0]
             delta = choice.get("delta") or {}
@@ -206,6 +224,9 @@ class QwenClient(LLMClient):
                     entry["arguments"] += fn["arguments"]  # 参数 JSON 是增量片段
             if choice.get("finish_reason"):
                 finish_reason = choice["finish_reason"]
+            # 有些实现把 usage 放在最后一个带 choices 的 chunk 里
+            if chunk.get("usage"):
+                usage_data = chunk["usage"]
 
         calls: list[ToolCall] = []
         for idx in sorted(tool_calls):
@@ -217,4 +238,9 @@ class QwenClient(LLMClient):
                 args = {"_raw": raw_args}
             calls.append(ToolCall(id=entry["id"] or f"call_{idx}", name=entry["name"], arguments=args))
 
-        return LLMResponse(content="".join(content_parts), tool_calls=calls, finish_reason=finish_reason)
+        return LLMResponse(
+            content="".join(content_parts),
+            tool_calls=calls,
+            finish_reason=finish_reason,
+            usage=QwenClient._parse_usage(usage_data),
+        )

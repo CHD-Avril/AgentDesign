@@ -106,6 +106,30 @@ class Handler(BaseHTTPRequestHandler):
             })
         elif path == "/v1/tools":
             self._send_json(200, {"tools": self.server.tools.schemas()})
+        elif path == "/v1/stats":
+            # 遥测统计
+            tel = getattr(self.server, "telemetry", None)
+            self._send_json(200, tel.summary() if tel else {"error": "telemetry not available"})
+        elif path == "/v1/knowledge":
+            # 知识库状态
+            kb = getattr(self.server, "knowledge_base", None)
+            if kb:
+                self._send_json(200, {
+                    "total_chunks": len(kb),
+                    "sources": kb.list_sources(),
+                })
+            else:
+                self._send_json(200, {"total_chunks": 0, "sources": [], "note": "知识库未启用（需要 API Key）"})
+        elif path == "/v1/memory":
+            # 长期记忆
+            ltm = getattr(self.server, "long_term_memory", None)
+            if ltm:
+                self._send_json(200, {
+                    "preferences": ltm.all_preferences(),
+                    "facts": [{"content": f.content, "source": f.source} for f in ltm.recent_facts(20)],
+                })
+            else:
+                self._send_json(200, {"preferences": {}, "facts": []})
         elif path == "/" or path == "/index.html":
             self._serve_frontend()
         elif path == "/v1/chat/stream":
@@ -232,6 +256,10 @@ def main() -> None:
     httpd.llm = agent.llm
     httpd.tools = agent.tools
     httpd.model_name = cfg.model if cfg.has_api_key() and not args.mock else "mock"
+    # 挂载增强模块（供 API 访问）
+    httpd.telemetry = getattr(agent, "telemetry", None)
+    httpd.knowledge_base = getattr(agent, "knowledge_base", None)
+    httpd.long_term_memory = getattr(agent, "long_term_memory", None)
 
     print(f"Agent 服务已启动：http://{args.host}:{args.port}")
     print("网页前端：浏览器打开上面的地址即可对话")

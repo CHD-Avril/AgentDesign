@@ -62,10 +62,17 @@ class Config:
     max_turns: int = 12        # 单次任务最大“思考→调工具”轮数
     context_tokens: int = 100_000  # 对话上下文预算（token），超出自动裁剪最老对话
     system_prompt: str = DEFAULT_SYSTEM_PROMPT
+    tool_max_retries: int = 1  # 工具网络错误自动重试次数
 
     # ---- 本地工具 ----
     work_dir: str = "workspace"  # 文件类工具的沙箱目录（相对项目根）
     code_exec_mode: str = "ask"  # 代码执行授权：off=禁用 / auto=低风险自动跑 / ask=每次确认
+
+    # ---- 遥测与日志 ----
+    log_dir: str = "logs"       # 日志与用量统计目录（相对项目根）
+
+    # ---- 高级功能开关 ----
+    enable_multi_agent: bool = False  # 是否启用多Agent协作模式（主管-员工）
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -83,6 +90,9 @@ class Config:
             context_tokens=int(_env("AGENT_CONTEXT_TOKENS", str(cls.context_tokens))),
             work_dir=_env("AGENT_WORK_DIR", cls.work_dir),
             code_exec_mode=_env("AGENT_CODE_EXEC", cls.code_exec_mode).strip().lower(),
+            tool_max_retries=int(_env("AGENT_TOOL_RETRIES", str(cls.tool_max_retries))),
+            log_dir=_env("AGENT_LOG_DIR", cls.log_dir),
+            enable_multi_agent=_env("AGENT_MULTI_AGENT", "false").strip().lower() in ("1", "true", "yes", "on"),
         )
 
     def has_api_key(self) -> bool:
@@ -91,6 +101,14 @@ class Config:
     def work_path(self) -> Path:
         """返回（并创建）文件工具的沙箱目录，绝对路径。"""
         p = Path(self.work_dir)
+        if not p.is_absolute():
+            p = PROJECT_ROOT / p
+        p.mkdir(parents=True, exist_ok=True)
+        return p.resolve()
+
+    def log_path(self) -> Path:
+        """返回（并创建）日志目录，绝对路径。"""
+        p = Path(self.log_dir)
         if not p.is_absolute():
             p = PROJECT_ROOT / p
         p.mkdir(parents=True, exist_ok=True)

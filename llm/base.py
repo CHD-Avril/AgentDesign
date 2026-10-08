@@ -20,6 +20,14 @@ class ToolCall:
 
 
 @dataclass
+class TokenUsage:
+    """一次 LLM 调用的 token 用量（从 API 返回的 usage 字段解析）。"""
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+
+
+@dataclass
 class LLMResponse:
     """一次 LLM 回复的统一封装。"""
 
@@ -27,6 +35,7 @@ class LLMResponse:
     tool_calls: list[ToolCall] = field(default_factory=list)  # 需要执行的工具调用
     finish_reason: str = ""                            # stop / tool_calls / length ...
     raw: dict[str, Any] | None = None                  # 原始返回，便于排查
+    usage: TokenUsage = field(default_factory=TokenUsage)  # token 用量（真实值）
 
 
 class LLMClient(ABC):

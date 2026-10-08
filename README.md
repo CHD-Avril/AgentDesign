@@ -9,16 +9,31 @@
 
 ## 特性
 
+### 核心能力
 - **函数调用式 ReAct 闭环**：思考 → 调工具 → 观察结果 → 继续思考 → 给出最终回答
 - **干净的接口**：`LLMClient` 抽象接口、`Tool` 工具基类、`ToolRegistry` 注册表、`Agent.run()`，随时可扩展
 - **默认对接 Qwen**（阿里云百炼 OpenAI 兼容接口），改两行配置即可换任意 OpenAI 兼容服务
 - **零依赖**：只用 `urllib` / `http.server` / `zoneinfo` 标准库，拿到就能跑
-- **联网能力（免 Key）**：`web_search` 主走 Bing（国内可达，含摘要），DuckDuckGo 兜底；
-  另开启 Qwen `enable_search` 让模型自带联网搜索
-- **内置 9 个工具**：计算器（AST 白名单防注入）、时间、网页抓取、网页搜索、文件读写（沙箱隔离）、**写程序 + 授权运行**（`run_python` / `shell`）
-- **双入口 + 网页前端**：命令行对话（`main.py chat`）+ HTTP 服务（`server.py`，自带网页聊天界面，浏览器打开即用）
 - **流式输出**：回答逐字打出，不用干等；`LLMClient.chat_stream()` 已实现（Qwen SSE 流）
 - **上下文管理**：按 token 预算的滑动窗口（默认 100k），超出自动裁剪最老对话，不会撑爆模型上下文
+
+### 智能增强（新增）
+- **🧠 长期记忆**：跨会话记住用户偏好和重要事实（SQLite 持久化），每次对话自动注入用户画像
+- **📚 知识库 RAG**：本地文档语义检索（向量嵌入 + 余弦相似度），让 Agent 能"读"你的资料
+- **📋 任务规划器**：复杂任务自动拆解成步骤计划，按计划执行不跑飞
+- **🔄 自我反思与重试**：工具网络错误自动重试，失败结果回传 LLM 自动调整策略
+- **📊 遥测与成本统计**：精确 token 计数、费用估算、运行日志，实时掌握用量
+
+### 工具系统
+- **内置 15+ 个工具**：计算器（AST 白名单防注入）、时间、网页抓取、网页搜索、文件读写（沙箱隔离）、代码执行（授权模式）
+- **🔍 知识库工具**：`knowledge_search` 语义检索、`knowledge_add` 添加文档、`knowledge_list` 列出来源
+- **💾 记忆工具**：`remember` 主动记住、`recall` 回忆、`forget` 删除
+- **🔀 工作流编排**：`workflow_run` 一次定义多步骤，支持变量引用和条件分支
+- **🖼️ 多模态工具**：`image_understand` 看图说话（Qwen-VL）、`image_generate` 文生图
+- **🤖 多 Agent 协作**（可选）：主管-员工模式，复杂任务自动拆解分配给专门的 Worker
+
+### 其他
+- **双入口 + 网页前端**：命令行对话（`main.py chat`）+ HTTP 服务（`server.py`，自带网页聊天界面）
 - **自带测试**：无需 pytest，`python tests/run_tests.py` 一键验证
 
 ---
@@ -28,7 +43,7 @@
 ```
 Agent设计/
 ├── config.py            # 配置加载（.env / 环境变量，全部有默认值）
-├── factory.py           # 装配工厂：按配置创建 LLM + Agent
+├── factory.py           # 装配工厂：按配置创建 LLM + Agent + 所有增强模块
 ├── main.py              # 命令行入口（对话模式 / 单次问答 / --mock 演示）
 ├── server.py            # HTTP 服务 + 网页托管 + SSE 流式接口（标准库实现）
 ├── web/agent-chat.html  # 网页前端（深色控制台，浏览器打开即用）
@@ -36,17 +51,37 @@ Agent设计/
 ├── llm/
 │   ├── base.py          # ★ LLMClient 抽象接口（接模型的唯一入口）
 │   ├── qwen_client.py   # Qwen / 任意 OpenAI 兼容接口实现
+│   ├── embedding.py     # Qwen Embedding 客户端（RAG 用）
 │   └── mock_client.py   # 离线模拟客户端（无 Key 演示 / 测试用）
+├── agent/
+│   ├── core.py          # ★ Agent 核心循环（思考→调工具→回答）
+│   ├── memory.py        # 短期上下文管理（token 滑动窗口）
+│   ├── long_term_memory.py  # 长期记忆与用户画像（SQLite 持久化）
+│   ├── memory_extractor.py  # 自动记忆提取（从对话中提取值得记住的信息）
+│   ├── rag.py           # 知识库 RAG 核心（文档切分 + 向量存储 + 检索）
+│   ├── planner.py       # 任务规划器（复杂任务自动拆解步骤）
+│   ├── multi_agent.py   # 多 Agent 协作系统（主管-员工模式）
+│   └── telemetry.py     # 遥测：token 统计、成本估算、运行日志
 ├── tools/
 │   ├── base.py          # ★ Tool 工具基类（加工具的唯一入口）
 │   ├── registry.py      # 工具注册表（注册 / 列举 / 执行）
-│   └── builtin.py       # 内置工具（计算/时间/抓取/搜索/文件）
-│   └── executor.py      # 代码执行工具（run_python / shell，含授权器）
-├── agent/
-│   ├── core.py          # ★ Agent 核心循环（思考→调工具→回答）
-│   └── memory.py        # 上下文管理（token 滑动窗口，默认 100k）
+│   ├── builtin.py       # 内置基础工具（计算/时间/抓取/搜索/文件）
+│   ├── executor.py     # 代码执行工具（run_python / shell，含授权器）
+│   ├── knowledge.py     # 知识库工具（检索/添加/列出）
+│   ├── long_term_memory.py  # 长期记忆工具（remember/recall/forget）
+│   ├── workflow.py       # 工作流编排工具（多步骤批量执行）
+│   └── multimodal.py    # 多模态工具（图像理解/生成）
+├── data/                # 持久化数据（自动创建）
+│   ├── knowledge_base.json  # 知识库向量数据
+│   └── memory.db        # 长期记忆 SQLite 数据库
+├── logs/                # 运行日志（自动创建）
+│   ├── agent.log       # 结构化运行日志
+│   └── usage_history.json  # 累计用量统计
+├── workspace/           # 文件工具沙箱目录
 ├── examples/use_agent.py  # 库用法示例
-└── tests/                 # 测试（零依赖运行器）
+└── tests/                 # 测试
+    ├── run_tests.py      # 原有测试
+    └── test_integration.py  # 新增模块集成测试
 ```
 
 ---
@@ -126,6 +161,9 @@ python main.py --list-tools
 | `AGENT_CONTEXT_TOKENS` | 对话上下文预算（token），超出自动裁剪最老对话 | `100000` |
 | `AGENT_WORK_DIR` | 文件工具沙箱目录 | `workspace` |
 | `AGENT_CODE_EXEC` | 代码执行授权策略：`off` 禁用 / `auto` 低风险自动 / `ask` 每次确认 | `ask` |
+| `AGENT_TOOL_RETRIES` | 工具网络错误自动重试次数 | `1` |
+| `AGENT_LOG_DIR` | 日志与用量统计目录 | `logs` |
+| `AGENT_MULTI_AGENT` | 是否启用多 Agent 协作模式（主管-员工） | `false` |
 
 **换其他模型**：只要服务商提供 OpenAI 兼容接口，改三处即可：
 

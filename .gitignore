@@ -10,3 +10,10 @@ workspace/
 
 # 运行日志不入库
 *.log
+logs/
+
+# 本地数据不入库
+data/
+
+# 临时文件
+*.tmp
