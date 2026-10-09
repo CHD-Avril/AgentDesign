@@ -202,30 +202,83 @@ class HttpFetchTool(Tool):
 # ================= 4. 文件沙箱 =================
 
 class _FileMixin:
-    """文件工具公共部分：把相对路径解析到沙箱内，越界直接拒绝。"""
+    """文件工具公共部分：路径安全检查，支持多目录白名单 + 系统目录黑名单。"""
 
     work_dir: Path
+    allowed_roots: list[Path]  # 允许访问的根目录列表
+
+    # 系统目录黑名单（绝对禁止，防止搞坏系统）
+    _FORBIDDEN_ROOTS = [
+        "C:\\Windows",
+        "C:\\Program Files",
+        "C:\\Program Files (x86)",
+        "C:\\System Volume Information",
+        "C:\\$Recycle.Bin",
+        "C:\\Boot",
+        "C:\\Recovery",
+    ]
 
     def _resolve(self, path_str: str) -> Path:
-        root = self.work_dir.resolve()
-        target = (root / path_str).resolve()
-        if target != root and root not in target.parents:
-            raise PermissionError(f"路径越界：{path_str!r}（仅允许访问沙箱目录 {root}）")
-        return target
+        """把用户给的路径解析成绝对路径，同时做安全检查。
+
+        支持两种路径：
+        - 相对路径：相对于 work_dir（比如 "notes.txt"）
+        - 绝对路径：直接用（比如 "C:/Users/xxx/Desktop/notes.txt"）
+        """
+        p = Path(path_str)
+
+        # 1. 解析成绝对路径
+        if p.is_absolute():
+            target = p.resolve()
+        else:
+            target = (self.work_dir / path_str).resolve()
+
+        # 2. 先检查黑名单（系统目录绝对禁止）
+        for forbidden in self._FORBIDDEN_ROOTS:
+            try:
+                forbidden_path = Path(forbidden).resolve()
+                if target == forbidden_path or forbidden_path in target.parents:
+                    raise PermissionError(
+                        f"禁止访问系统目录：{target}（为了安全，系统目录不允许操作）"
+                    )
+            except (OSError, ValueError):
+                continue
+
+        # 3. 再检查白名单（必须在允许的目录范围内）
+        for root in self.allowed_roots:
+            try:
+                root_resolved = root.resolve()
+                if target == root_resolved or root_resolved in target.parents:
+                    return target
+            except (OSError, ValueError):
+                continue
+
+        # 4. 都不在，拒绝
+        allowed_str = ", ".join(str(r) for r in self.allowed_roots)
+        raise PermissionError(
+            f"路径越界：{path_str!r}\n"
+            f"允许访问的目录：{allowed_str}\n"
+            f"（系统目录已自动禁止）"
+        )
 
 
 class FileListTool(_FileMixin, Tool):
     name = "file_list"
-    description = "列出工作目录（沙箱）下的文件与子目录。"
+    description = "列出文件目录。支持相对路径（相对于沙箱）或绝对路径（在允许的目录范围内）。"
     parameters = {
         "type": "object",
         "properties": {
-            "subdir": {"type": "string", "description": "相对沙箱根的子目录，默认 '.'"},
+            "subdir": {"type": "string", "description": "目录路径，默认 '.'（沙箱根目录）。支持绝对路径如 'C:/Users/xxx/Desktop'"},
         },
     }
 
     def __init__(self, work_dir: Path) -> None:
         self.work_dir = work_dir
+        # 白名单：沙箱目录 + 用户主目录
+        self.allowed_roots = [
+            work_dir.resolve(),
+            Path.home().resolve(),  # 你的用户目录（桌面、文档、下载等）
+        ]
 
     def run(self, subdir: str = ".") -> str:
         try:
@@ -251,11 +304,11 @@ class FileListTool(_FileMixin, Tool):
 
 class FileReadTool(_FileMixin, Tool):
     name = "file_read"
-    description = "读取工作目录（沙箱）内的文本文件内容。"
+    description = "读取文本文件内容。支持相对路径（相对于沙箱）或绝对路径（在允许的目录范围内）。"
     parameters = {
         "type": "object",
         "properties": {
-            "path": {"type": "string", "description": "相对沙箱根的文件路径"},
+            "path": {"type": "string", "description": "文件路径，支持绝对路径如 'C:/Users/xxx/Desktop/note.txt'"},
             "max_chars": {"type": "integer", "description": "最多读取字符数，默认 10000"},
         },
         "required": ["path"],
@@ -263,6 +316,10 @@ class FileReadTool(_FileMixin, Tool):
 
     def __init__(self, work_dir: Path) -> None:
         self.work_dir = work_dir
+        self.allowed_roots = [
+            work_dir.resolve(),
+            Path.home().resolve(),
+        ]
 
     def run(self, path: str, max_chars: int = 10_000) -> str:
         try:
@@ -282,11 +339,11 @@ class FileReadTool(_FileMixin, Tool):
 
 class FileWriteTool(_FileMixin, Tool):
     name = "file_write"
-    description = "把文本写入工作目录（沙箱）内的文件（自动创建目录，覆盖已有文件）。"
+    description = "把文本写入文件（自动创建目录，覆盖已有文件）。支持相对路径或绝对路径。"
     parameters = {
         "type": "object",
         "properties": {
-            "path": {"type": "string", "description": "相对沙箱根的文件路径"},
+            "path": {"type": "string", "description": "文件路径，支持绝对路径如 'C:/Users/xxx/Desktop/note.txt'"},
             "content": {"type": "string", "description": "要写入的文本内容"},
         },
         "required": ["path", "content"],
@@ -294,6 +351,10 @@ class FileWriteTool(_FileMixin, Tool):
 
     def __init__(self, work_dir: Path) -> None:
         self.work_dir = work_dir
+        self.allowed_roots = [
+            work_dir.resolve(),
+            Path.home().resolve(),
+        ]
 
     def run(self, path: str, content: str) -> str:
         try:
