@@ -6,6 +6,9 @@ from .builtin import (
     FileListTool,
     FileReadTool,
     FileWriteTool,
+    FileMoveTool,
+    FileCopyTool,
+    FileDeleteTool,
     HttpFetchTool,
     WebSearchTool,
 )
@@ -22,6 +25,9 @@ __all__ = [
     "FileListTool",
     "FileReadTool",
     "FileWriteTool",
+    "FileMoveTool",
+    "FileCopyTool",
+    "FileDeleteTool",
     "RunPythonTool",
     "ShellTool",
     "make_executor_tools",
@@ -45,6 +51,9 @@ def default_registry(work_dir, code_exec_mode: str = "ask", interactive: bool = 
     registry.register(FileListTool(work_dir))
     registry.register(FileReadTool(work_dir))
     registry.register(FileWriteTool(work_dir))
+    registry.register(FileMoveTool(work_dir))
+    registry.register(FileCopyTool(work_dir))
+    registry.register(FileDeleteTool(work_dir))
     for tool in make_executor_tools(work_dir, mode=code_exec_mode, interactive=interactive, asker=asker):
         registry.register(tool)
     return registry

@@ -1,0 +1,20 @@
+{
+  "name": "agent-copilot-runtime",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "CopilotKit Runtime bridge: React SPA <-> Python Agent (AG-UI)",
+  "scripts": {
+    "start": "tsx server.ts",
+    "dev": "tsx watch server.ts"
+  },
+  "dependencies": {
+    "@ag-ui/client": "^1.0.2",
+    "@copilotkit/runtime": "^1.50.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}

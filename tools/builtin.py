@@ -369,6 +369,116 @@ class FileWriteTool(_FileMixin, Tool):
         return f"已写入 {len(content)} 字符 → {path}"
 
 
+class FileMoveTool(_FileMixin, Tool):
+    name = "file_move"
+    description = "移动或重命名文件/目录。支持在允许的目录范围内操作。"
+    parameters = {
+        "type": "object",
+        "properties": {
+            "src": {"type": "string", "description": "源文件/目录路径"},
+            "dst": {"type": "string", "description": "目标路径（可以是新文件名）"},
+        },
+        "required": ["src", "dst"],
+    }
+
+    def __init__(self, work_dir: Path) -> None:
+        self.work_dir = work_dir
+        self.allowed_roots = [
+            work_dir.resolve(),
+            Path.home().resolve(),
+        ]
+
+    def run(self, src: str, dst: str) -> str:
+        try:
+            src_path = self._resolve(src)
+            dst_path = self._resolve(dst)
+        except Exception as err:
+            return f"错误：{err}"
+        if not src_path.exists():
+            return f"源路径不存在：{src}"
+        try:
+            dst_path.parent.mkdir(parents=True, exist_ok=True)
+            src_path.replace(dst_path)
+        except Exception as err:
+            return f"移动失败：{type(err).__name__}: {err}"
+        return f"已移动：{src} → {dst}"
+
+
+class FileCopyTool(_FileMixin, Tool):
+    name = "file_copy"
+    description = "复制文件/目录到目标位置。"
+    parameters = {
+        "type": "object",
+        "properties": {
+            "src": {"type": "string", "description": "源文件/目录路径"},
+            "dst": {"type": "string", "description": "目标路径"},
+        },
+        "required": ["src", "dst"],
+    }
+
+    def __init__(self, work_dir: Path) -> None:
+        self.work_dir = work_dir
+        self.allowed_roots = [
+            work_dir.resolve(),
+            Path.home().resolve(),
+        ]
+
+    def run(self, src: str, dst: str) -> str:
+        try:
+            src_path = self._resolve(src)
+            dst_path = self._resolve(dst)
+        except Exception as err:
+            return f"错误：{err}"
+        if not src_path.exists():
+            return f"源路径不存在：{src}"
+        try:
+            import shutil
+            if src_path.is_dir():
+                shutil.copytree(src_path, dst_path)
+            else:
+                dst_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src_path, dst_path)
+        except Exception as err:
+            return f"复制失败：{type(err).__name__}: {err}"
+        return f"已复制：{src} → {dst}"
+
+
+class FileDeleteTool(_FileMixin, Tool):
+    name = "file_delete"
+    description = "删除文件或目录（递归删除目录）。⚠ 高危操作，请确认后再执行。"
+    parameters = {
+        "type": "object",
+        "properties": {
+            "path": {"type": "string", "description": "要删除的文件/目录路径"},
+        },
+        "required": ["path"],
+    }
+
+    def __init__(self, work_dir: Path) -> None:
+        self.work_dir = work_dir
+        self.allowed_roots = [
+            work_dir.resolve(),
+            Path.home().resolve(),
+        ]
+
+    def run(self, path: str) -> str:
+        try:
+            target = self._resolve(path)
+        except Exception as err:
+            return f"错误：{err}"
+        if not target.exists():
+            return f"路径不存在：{path}"
+        try:
+            import shutil
+            if target.is_dir():
+                shutil.rmtree(target)
+            else:
+                target.unlink()
+        except Exception as err:
+            return f"删除失败：{type(err).__name__}: {err}"
+        return f"已删除：{path}"
+
+
 # ================= 5. 网页搜索（免 Key，国内可用） =================
 
 class WebSearchTool(Tool):

@@ -80,7 +80,7 @@ class Config:
 
     # ---- 本地工具 ----
     work_dir: str = "workspace"  # 文件类工具的沙箱目录（相对项目根）
-    code_exec_mode: str = "ask"  # 代码执行授权：off=禁用 / auto=低风险自动跑 / ask=每次确认
+    code_exec_mode: str = "auto"  # 代码执行授权：off=禁用 / auto=低风险自动跑 / ask=每次确认
 
     # ---- 遥测与日志 ----
     log_dir: str = "logs"       # 日志与用量统计目录（相对项目根）
