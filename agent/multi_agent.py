@@ -202,3 +202,119 @@ class MultiAgentOrchestrator:
             system_prompt=system_prompt or default_prompt,
             max_turns=15,
         )
+
+
+# ============================================================
+# 辩论/投票模式（Debate / Voting）
+# ============================================================
+
+@dataclass
+class DebateResult:
+    """辩论结果。"""
+    question: str
+    answers: list[str]       # 每个agent的回答
+    winner_index: int        # 最优答案的下标
+    winner_answer: str       # 最优答案内容
+    judge_reason: str        # 裁判理由
+    all_scores: list[float]  # 每个答案的分数
+
+
+class DebateOrchestrator:
+    """辩论式多Agent：多个Agent各自回答，裁判Agent选最优。
+
+    适用场景：
+    - 开放性问题（没有标准答案，需要多方视角）
+    - 重要决策（多几个角度更稳妥）
+    - 创意生成（多几个方案选最好的）
+    """
+
+    def __init__(
+        self,
+        llm: LLMClient,
+        base_tools: ToolRegistry,
+        *,
+        num_debaters: int = 3,       # 几个辩手
+        debater_styles: list[str] | None = None,  # 每个辩手的风格
+    ) -> None:
+        self.llm = llm
+        self.base_tools = base_tools
+        self.num_debaters = num_debaters
+
+        # 默认辩手风格（从不同角度思考）
+        self.debater_styles = debater_styles or [
+            "你是一个务实的工程师，注重可行性和落地细节。",
+            "你是一个严谨的学者，注重逻辑严密和理论依据。",
+            "你是一个创新的产品经理，注重用户体验和商业价值。",
+        ]
+
+    def debate(self, question: str) -> DebateResult:
+        """发起一轮辩论。"""
+        # 第一步：每个辩手独立回答
+        answers: list[str] = []
+        for i in range(min(self.num_debaters, len(self.debater_styles))):
+            style = self.debater_styles[i]
+            agent = Agent(
+                self.llm,
+                self.base_tools,
+                system_prompt=f"{style}\n\n请认真回答用户的问题，给出你的观点和理由。",
+                max_turns=6,
+            )
+            result = agent.run(question)
+            answers.append(result.content)
+
+        # 第二步：裁判Agent比较所有答案，选出最好的
+        judge_prompt = f"""下面有 {len(answers)} 个AI助手对同一个问题的回答。
+
+问题：{question}
+
+"""
+        for i, ans in enumerate(answers):
+            judge_prompt += f"\n【回答 {i+1}】\n{ans}\n"
+
+        judge_prompt += f"""
+请你作为裁判，从以下几个维度评估每个回答：
+1. 准确性（内容是否正确）
+2. 完整性（是否覆盖了所有要点）
+3. 实用性（对用户有没有实际帮助）
+4. 逻辑性（推理是否严密）
+
+请严格按 JSON 格式输出（不要输出其他内容）：
+{{
+  "scores": [{", ".join(["分数"] * len(answers))}],
+  "winner": 最优回答的编号（1-{len(answers)}）,
+  "reason": "为什么选这个（100字以内）"
+}}"""
+
+        try:
+            response = self.llm.chat([{"role": "user", "content": judge_prompt}])
+            text = response.content.strip()
+            if text.startswith("```"):
+                text = text.split("```")[1]
+                if text.startswith("json"):
+                    text = text[4:]
+                text = text.strip()
+
+            import json as _json
+            data = _json.loads(text)
+            scores = [float(s) for s in data.get("scores", [0] * len(answers))]
+            winner = int(data.get("winner", 1)) - 1
+            reason = str(data.get("reason", ""))
+
+            return DebateResult(
+                question=question,
+                answers=answers,
+                winner_index=winner,
+                winner_answer=answers[winner],
+                judge_reason=reason,
+                all_scores=scores,
+            )
+        except Exception as e:
+            # 裁判失败就默认选第一个
+            return DebateResult(
+                question=question,
+                answers=answers,
+                winner_index=0,
+                winner_answer=answers[0],
+                judge_reason=f"裁判解析失败，默认选第一个回答：{e}",
+                all_scores=[8.0] * len(answers),
+            )

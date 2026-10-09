@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -22,6 +23,7 @@ from .telemetry import Telemetry, TokenUsage
 from .long_term_memory import LongTermMemory
 from .memory_extractor import MemoryExtractor
 from .planner import Planner, TaskPlan
+from .reflector import Reflector, ReflectionVerdict
 
 ToolHook = Callable[[str, dict[str, Any], bool, str], None]  # (工具名, 参数, 是否成功, 结果文本)
 
@@ -77,6 +79,7 @@ class Agent:
         long_term_memory: LongTermMemory | None = None,
         memory_extractor: MemoryExtractor | None = None,
         planner: Planner | None = None,
+        reflector: Reflector | None = None,  # 自我反思器（可选）
     ) -> None:
         self.llm = llm
         self.tools = tools
@@ -89,6 +92,7 @@ class Agent:
         self.long_term_memory = long_term_memory
         self.memory_extractor = memory_extractor
         self.planner = planner
+        self.reflector = reflector
 
         # 动态 system prompt（每次调用时拼接长期记忆）
         self.system_prompt = system_prompt
@@ -143,6 +147,28 @@ class Agent:
 
             # ---- 模型给出最终回答 ----
             if not response.tool_calls:
+                # 自我反思：如果启用了 reflector，先评估一下
+                if self.reflector:
+                    try:
+                        verdict = self.reflector.evaluate(
+                            user_input, response.content, tool_uses
+                        )
+                        # 如果不通过，把改进建议加进消息，让 Agent 继续
+                        if not verdict.passed and verdict.feedback:
+                            # 把当前回答作为历史，加上改进建议
+                            messages.append({
+                                "role": "assistant",
+                                "content": response.content,
+                            })
+                            messages.append({
+                                "role": "user",
+                                "content": f"你的上一个回答不够好。问题：{'; '.join(verdict.issues)}。改进建议：{verdict.feedback}。请重新回答，确保覆盖所有要点。",
+                            })
+                            # 继续下一轮，不返回
+                            continue
+                    except Exception:
+                        pass  # 反思失败不阻塞主流程
+
                 self.memory.add("user", user_input)
                 self.memory.add("assistant", response.content)
 
@@ -180,9 +206,24 @@ class Agent:
                 ],
             })
 
-            # ---- 逐个执行工具（带自动重试），结果作为 tool 消息回传 ----
-            for tc in response.tool_calls:
-                ok, result, elapsed, retries = self._execute_tool_with_retry(tc.name, tc.arguments)
+            # ---- 并发执行所有工具调用 ----
+            # 结果按 tc 顺序返回，保证消息顺序和 LLM 输出一致
+            results: list[tuple[bool, str, float, int]] = [None] * len(response.tool_calls)  # type: ignore
+
+            def _run_one(idx: int, tc) -> None:
+                results[idx] = self._execute_tool_with_retry(tc.name, tc.arguments)
+
+            threads: list[threading.Thread] = []
+            for idx, tc in enumerate(response.tool_calls):
+                t = threading.Thread(target=_run_one, args=(idx, tc), daemon=True)
+                t.start()
+                threads.append(t)
+            for t in threads:
+                t.join()
+
+            # ---- 处理结果（按顺序）----
+            for idx, tc in enumerate(response.tool_calls):
+                ok, result, elapsed, retries = results[idx]
                 use = ToolUse(
                     name=tc.name,
                     arguments=tc.arguments,

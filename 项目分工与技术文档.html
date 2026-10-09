@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>AI Agent 智能体系统 · 项目分工与技术文档</title>
+<style>
+  @page { margin: 2cm; }
+  body {
+    font-family: -apple-system, "Microsoft YaHei", "Segoe UI", sans-serif;
+    line-height: 1.7;
+    color: #1e293b;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 20px;
+    font-size: 14px;
+  }
+  h1 {
+    font-size: 28px;
+    color: #0f172a;
+    border-bottom: 3px solid #10b981;
+    padding-bottom: 10px;
+    margin-top: 0;
+  }
+  h2 {
+    font-size: 22px;
+    color: #0f172a;
+    margin-top: 36px;
+    border-left: 4px solid #10b981;
+    padding-left: 12px;
+  }
+  h3 {
+    font-size: 17px;
+    color: #334155;
+    margin-top: 24px;
+  }
+  blockquote {
+    border-left: 4px solid #e2e8f0;
+    margin-left: 0;
+    padding: 8px 16px;
+    background: #f8fafc;
+    color: #64748b;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+    font-size: 13px;
+  }
+  th, td {
+    border: 1px solid #e2e8f0;
+    padding: 8px 12px;
+    text-align: left;
+  }
+  th {
+    background: #f1f5f9;
+    font-weight: 600;
+    color: #334155;
+  }
+  tr:nth-child(even) {
+    background: #f8fafc;
+  }
+  code {
+    background: #f1f5f9;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: "Cascadia Code", Consolas, monospace;
+    font-size: 13px;
+    color: #e11d48;
+  }
+  pre {
+    background: #0f172a;
+    color: #e2e8f0;
+    padding: 16px;
+    border-radius: 8px;
+    overflow-x: auto;
+    font-family: "Cascadia Code", Consolas, monospace;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+  pre code {
+    background: transparent;
+    color: inherit;
+    padding: 0;
+  }
+  ul, ol {
+    padding-left: 24px;
+  }
+  li {
+    margin: 4px 0;
+  }
+  hr {
+    border: none;
+    border-top: 1px solid #e2e8f0;
+    margin: 32px 0;
+  }
+  .member-card {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    padding: 20px;
+    margin: 16px 0;
+  }
+  .member-card h3 {
+    margin-top: 0;
+    color: #10b981;
+  }
+</style>
+</head>
+<body>
+
+<h1>AI Agent 智能体系统 · 项目分工与技术文档</h1>
+
+<blockquote>
+<p>课程项目：人工智能设计 · Agent 设计<br>
+团队规模：5 人<br>
+项目周期：冬季学期</p>
+</blockquote>
+
+<h2>一、项目概述</h2>
+
+<p>本项目实现了一个<strong>能调用工具干活的 AI 智能体框架</strong>：用户的提问由远端大模型（Qwen）负责思考与决策，本地只负责执行工具（计算、联网、读写文件、代码运行等）。</p>
+
+<h3>核心特性</h3>
+<ul>
+<li><strong>ReAct 闭环</strong>：思考 → 调工具 → 观察结果 → 继续思考 → 最终回答</li>
+<li><strong>零本地算力</strong>：所有智能来自云端 LLM，本地只执行工具</li>
+<li><strong>零第三方依赖</strong>：仅用 Python 3.9+ 标准库，拿到就能跑</li>
+<li><strong>18+ 内置工具</strong>：计算、搜索、文件、代码、知识库、记忆、多模态等</li>
+<li><strong>现代化 Web 界面</strong>：三栏布局、流式输出、工具调用可视化</li>
+</ul>
+
+<hr>
+
+<h2>二、技术栈</h2>
+
+<h3>后端技术</h3>
+<table>
+<tr><th>技术</th><th>说明</th></tr>
+<tr><td><strong>Python 3.9+</strong></td><td>主开发语言，零第三方依赖</td></tr>
+<tr><td><code>urllib</code></td><td>HTTP 客户端，调用 LLM API、网页抓取</td></tr>
+<tr><td><code>http.server</code></td><td>标准库 HTTP 服务，SSE 流式接口</td></tr>
+<tr><td><code>sqlite3</code></td><td>长期记忆持久化（标准库自带）</td></tr>
+<tr><td><code>ast</code></td><td>计算器安全求值（AST 白名单防注入）</td></tr>
+<tr><td><code>subprocess</code></td><td>代码执行（run_python / shell）</td></tr>
+</table>
+
+<h3>大模型接口</h3>
+<table>
+<tr><th>技术</th><th>说明</th></tr>
+<tr><td><strong>Qwen（阿里云百炼）</strong></td><td>默认 LLM，OpenAI 兼容接口</td></tr>
+<tr><td><strong>Function Calling</strong></td><td>函数调用，让 LLM 决定何时用哪个工具</td></tr>
+<tr><td><strong>SSE 流式输出</strong></td><td>Server-Sent Events，打字机效果</td></tr>
+<tr><td><code>text-embedding-v3</code></td><td>向量嵌入，用于知识库 RAG</td></tr>
+<tr><td><strong>Qwen-VL</strong></td><td>多模态图像理解</td></tr>
+</table>
+
+<h3>前端技术</h3>
+<table>
+<tr><th>技术</th><th>说明</th></tr>
+<tr><td><strong>HTML5 / CSS3</strong></td><td>单文件前端，无框架</td></tr>
+<tr><td><strong>原生 JavaScript</strong></td><td>无 jQuery / 无 React</td></tr>
+<tr><td><strong>EventSource API</strong></td><td>浏览器端 SSE 流式接收</td></tr>
+<tr><td><strong>响应式设计</strong></td><td>桌面 + 手机自适应</td></tr>
+</table>
+
+<h3>存储与数据</h3>
+<table>
+<tr><th>技术</th><th>说明</th></tr>
+<tr><td><strong>SQLite</strong></td><td>长期记忆（用户偏好 + 事实存储）</td></tr>
+<tr><td><strong>JSON 文件</strong></td><td>知识库向量数据、用量统计历史</td></tr>
+<tr><td><strong>文件沙箱</strong></td><td>workspace/ 目录隔离，防路径穿越</td></tr>
+</table>
+
+<hr>
+
+<h2>三、核心知识点</h2>
+
+<h3>3.1 Agent 架构基础</h3>
+<table>
+<tr><th>知识点</th><th>说明</th><th>对应模块</th></tr>
+<tr><td><strong>ReAct 模式</strong></td><td>Reasoning + Acting 交替进行</td><td><code>agent/core.py</code></td></tr>
+<tr><td><strong>感知-决策-执行</strong></td><td>三层架构：输入 → 思考 → 行动</td><td><code>agent/core.py</code></td></tr>
+<tr><td><strong>函数调用（Function Calling）</strong></td><td>LLM 输出工具名 + 参数，本地执行</td><td><code>llm/base.py</code></td></tr>
+<tr><td><strong>工具注册表模式</strong></td><td>统一管理工具的注册、列举、执行</td><td><code>tools/registry.py</code></td></tr>
+</table>
+
+<h3>3.2 记忆系统</h3>
+<table>
+<tr><th>知识点</th><th>说明</th><th>对应模块</th></tr>
+<tr><td><strong>短期记忆</strong></td><td>对话上下文，token 滑动窗口裁剪</td><td><code>agent/memory.py</code></td></tr>
+<tr><td><strong>长期记忆</strong></td><td>跨会话持久化，用户偏好 + 事实</td><td><code>agent/long_term_memory.py</code></td></tr>
+<tr><td><strong>自动记忆提取</strong></td><td>LLM 自动从对话中提取值得记住的信息</td><td><code>agent/memory_extractor.py</code></td></tr>
+<tr><td><strong>用户画像</strong></td><td>偏好注入 system prompt，个性化回答</td><td><code>agent/core.py</code></td></tr>
+</table>
+
+<h3>3.3 知识库 RAG</h3>
+<table>
+<tr><th>知识点</th><th>说明</th><th>对应模块</th></tr>
+<tr><td><strong>RAG（检索增强生成）</strong></td><td>先检索相关文档，再拼入 Prompt</td><td><code>agent/rag.py</code></td></tr>
+<tr><td><strong>文档切分</strong></td><td>按段落/句子切分，带重叠</td><td><code>agent/rag.py</code></td></tr>
+<tr><td><strong>向量嵌入（Embedding）</strong></td><td>文本转成稠密向量</td><td><code>llm/embedding.py</code></td></tr>
+<tr><td><strong>余弦相似度检索</strong></td><td>计算向量相似度，取 top-k</td><td><code>agent/rag.py</code></td></tr>
+</table>
+
+<h3>3.4 智能增强</h3>
+<table>
+<tr><th>知识点</th><th>说明</th><th>对应模块</th></tr>
+<tr><td><strong>任务规划</strong></td><td>复杂任务拆解成步骤计划</td><td><code>agent/planner.py</code></td></tr>
+<tr><td><strong>自我反思</strong></td><td>工具失败后回传 LLM 自动调整</td><td><code>agent/core.py</code></td></tr>
+<tr><td><strong>自动重试</strong></td><td>网络错误类工具自动重试</td><td><code>agent/core.py</code></td></tr>
+<tr><td><strong>遥测与成本统计</strong></td><td>token 计数、费用估算、运行日志</td><td><code>agent/telemetry.py</code></td></tr>
+</table>
+
+<h3>3.5 高级能力</h3>
+<table>
+<tr><th>知识点</th><th>说明</th><th>对应模块</th></tr>
+<tr><td><strong>多Agent协作</strong></td><td>主管-员工模式，任务分配与汇总</td><td><code>agent/multi_agent.py</code></td></tr>
+<tr><td><strong>工作流编排</strong></td><td>多步骤批量执行，变量引用</td><td><code>tools/workflow.py</code></td></tr>
+<tr><td><strong>多模态</strong></td><td>图像理解（Qwen-VL）、文生图</td><td><code>tools/multimodal.py</code></td></tr>
+<tr><td><strong>代码执行</strong></td><td>Python / Shell 执行 + 授权机制</td><td><code>tools/executor.py</code></td></tr>
+</table>
+
+<h3>3.6 安全设计</h3>
+<table>
+<tr><th>知识点</th><th>说明</th><th>对应模块</th></tr>
+<tr><td><strong>AST 白名单</strong></td><td>计算器只允许数学运算，防代码注入</td><td><code>tools/builtin.py</code></td></tr>
+<tr><td><strong>路径沙箱</strong></td><td>文件工具只能访问 workspace/</td><td><code>tools/builtin.py</code></td></tr>
+<tr><td><strong>授权机制</strong></td><td>代码执行需用户确认（ask/auto/off）</td><td><code>tools/executor.py</code></td></tr>
+<tr><td><strong>风险黑名单</strong></td><td>删除、格式化、关机等高危操作拦截</td><td><code>tools/executor.py</code></td></tr>
+</table>
+
+<hr>
+
+<h2>四、五人分工</h2>
+
+<div class="member-card">
+<h3>👤 成员 A：核心引擎组</h3>
+<p><strong>负责模块</strong>：Agent 核心循环、LLM 接口、短期记忆</p>
+<table>
+<tr><th>文件</th><th>职责</th></tr>
+<tr><td><code>agent/core.py</code></td><td>ReAct 主循环、工具调用调度、最终回答</td></tr>
+<tr><td><code>agent/memory.py</code></td><td>上下文滑动窗口、token 估算、消息裁剪</td></tr>
+<tr><td><code>llm/base.py</code></td><td>LLMClient 抽象接口、TokenUsage 数据类</td></tr>
+<tr><td><code>llm/qwen_client.py</code></td><td>Qwen API 调用、SSE 流式、usage 解析</td></tr>
+<tr><td><code>llm/mock_client.py</code></td><td>离线模拟客户端</td></tr>
+<tr><td><code>config.py</code></td><td>配置加载、环境变量解析</td></tr>
+</table>
+<p><strong>核心知识点</strong>：ReAct 模式原理与实现、函数调用协议、SSE 流式输出、token 预算管理</p>
+<p><strong>交付目标</strong>：Agent 能正常对话、调用工具、流式输出；支持切换不同 LLM 后端</p>
+</div>
+
+<div class="member-card">
+<h3>👤 成员 B：工具系统组</h3>
+<p><strong>负责模块</strong>：基础工具、代码执行、安全沙箱</p>
+<table>
+<tr><th>文件</th><th>职责</th></tr>
+<tr><td><code>tools/base.py</code></td><td>Tool 抽象基类</td></tr>
+<tr><td><code>tools/registry.py</code></td><td>工具注册表（注册/列举/执行）</td></tr>
+<tr><td><code>tools/builtin.py</code></td><td>计算器、时间、网页抓取、网页搜索、文件读写</td></tr>
+<tr><td><code>tools/executor.py</code></td><td>run_python / shell 代码执行 + 授权器</td></tr>
+</table>
+<p><strong>核心知识点</strong>：插件化工具系统、AST 安全求值、路径沙箱、代码执行授权策略</p>
+<p><strong>交付目标</strong>：9+ 个内置工具全部可用；计算器安全；文件操作不能越界；代码执行有授权确认</p>
+</div>
+
+<div class="member-card">
+<h3>👤 成员 C：智能增强组</h3>
+<p><strong>负责模块</strong>：知识库 RAG、长期记忆、任务规划、遥测统计</p>
+<table>
+<tr><th>文件</th><th>职责</th></tr>
+<tr><td><code>agent/rag.py</code></td><td>文档切分、向量存储、余弦相似度检索</td></tr>
+<tr><td><code>llm/embedding.py</code></td><td>Qwen Embedding API 客户端</td></tr>
+<tr><td><code>agent/long_term_memory.py</code></td><td>SQLite 持久化、用户偏好、事实记忆</td></tr>
+<tr><td><code>agent/memory_extractor.py</code></td><td>自动从对话提取记忆</td></tr>
+<tr><td><code>agent/planner.py</code></td><td>任务规划器、启发式判断</td></tr>
+<tr><td><code>agent/telemetry.py</code></td><td>token 统计、成本估算、运行日志</td></tr>
+<tr><td><code>tools/knowledge.py</code></td><td>knowledge_search / add / list 工具</td></tr>
+<tr><td><code>tools/long_term_memory.py</code></td><td>remember / recall / forget 工具</td></tr>
+</table>
+<p><strong>核心知识点</strong>：RAG 完整流程、向量嵌入、长期记忆与用户画像、任务规划、遥测</p>
+<p><strong>交付目标</strong>：知识库能添加文档、语义检索；长期记忆跨会话生效；复杂任务自动拆解</p>
+</div>
+
+<div class="member-card">
+<h3>👤 成员 D：高级能力组</h3>
+<p><strong>负责模块</strong>：多Agent协作、工作流编排、多模态工具</p>
+<table>
+<tr><th>文件</th><th>职责</th></tr>
+<tr><td><code>agent/multi_agent.py</code></td><td>主管-员工模式、子Agent调度</td></tr>
+<tr><td><code>tools/workflow.py</code></td><td>工作流执行器、变量引用、条件分支</td></tr>
+<tr><td><code>tools/multimodal.py</code></td><td>图像理解（Qwen-VL）、文生图</td></tr>
+</table>
+<p><strong>核心知识点</strong>：多Agent协作架构、工作流编排、多模态大模型、文生图 API</p>
+<p><strong>交付目标</strong>：多Agent模式能拆解复杂任务；工作流工具能一次执行多步骤；图像理解 + 文生图</p>
+</div>
+
+<div class="member-card">
+<h3>👤 成员 E：前端与部署组</h3>
+<p><strong>负责模块</strong>：Web 前端、HTTP 服务、测试、文档</p>
+<table>
+<tr><th>文件</th><th>职责</th></tr>
+<tr><td><code>web/agent-chat.html</code></td><td>现代化三栏布局聊天界面</td></tr>
+<tr><td><code>server.py</code></td><td>HTTP 服务、SSE 接口、API 路由</td></tr>
+<tr><td><code>main.py</code></td><td>命令行入口</td></tr>
+<tr><td><code>factory.py</code></td><td>装配工厂（所有模块组装）</td></tr>
+<tr><td><code>tests/test_all.py</code></td><td>全模块测试用例</td></tr>
+<tr><td><code>README.md</code></td><td>项目文档</td></tr>
+</table>
+<p><strong>核心知识点</strong>：原生 JS 单页应用、EventSource API、HTTP 服务设计、响应式 CSS、软件测试</p>
+<p><strong>交付目标</strong>：Web 界面美观好用；所有 API 接口文档齐全；测试用例覆盖率 90%+</p>
+</div>
+
+<hr>
+
+<h2>五、协作流程</h2>
+
+<h3>开发顺序</h3>
+<pre><code>第一周：核心引擎 + 基础工具（A + B）
+   ↓
+第二周：智能增强（C）
+   ↓
+第三周：高级能力（D）
+   ↓
+第四周：前端 + 集成测试（E + 全员）</code></pre>
+
+<h3>Git 协作</h3>
+<ul>
+<li>每人一个 feature 分支，开发完合并到 main</li>
+<li>提交信息规范：<code>feat: 新增功能</code> / <code>fix: 修复bug</code> / <code>docs: 文档更新</code></li>
+<li>每天至少 push 一次，避免代码丢失</li>
+</ul>
+
+<h3>接口约定</h3>
+<ul>
+<li>模块之间通过抽象接口解耦（如 LLMClient、Tool、Agent）</li>
+<li>新增工具继承 Tool 基类，注册到 ToolRegistry 即可</li>
+<li>新增 LLM 后端继承 LLMClient 即可切换</li>
+</ul>
+
+<hr>
+
+<h2>六、项目结构总览</h2>
+
+<pre><code>AgentDesign/
+├── agent/                    # Agent 核心逻辑
+│   ├── core.py               # ReAct 主循环
+│   ├── memory.py             # 短期记忆（滑动窗口）
+│   ├── long_term_memory.py   # 长期记忆（SQLite）
+│   ├── memory_extractor.py   # 自动记忆提取
+│   ├── rag.py                # 知识库 RAG
+│   ├── planner.py            # 任务规划器
+│   ├── multi_agent.py        # 多Agent协作
+│   └── telemetry.py          # 遥测与统计
+├── llm/                      # 大模型接口
+│   ├── base.py               # 抽象接口
+│   ├── qwen_client.py        # Qwen 实现
+│   ├── embedding.py          # 向量嵌入
+│   └── mock_client.py        # 离线模拟
+├── tools/                    # 工具系统
+│   ├── base.py               # 工具基类
+│   ├── registry.py           # 注册表
+│   ├── builtin.py            # 基础工具
+│   ├── executor.py           # 代码执行
+│   ├── knowledge.py          # 知识库工具
+│   ├── long_term_memory.py   # 记忆工具
+│   ├── workflow.py           # 工作流工具
+│   └── multimodal.py         # 多模态工具
+├── web/                      # 前端
+│   └── agent-chat.html       # 单文件聊天界面
+├── tests/                    # 测试
+├── config.py                 # 配置
+├── factory.py                # 装配工厂
+├── main.py                   # 命令行入口
+├── server.py                 # HTTP 服务
+└── README.md                 # 项目文档</code></pre>
+
+<hr>
+
+<h2>七、评分要点（建议）</h2>
+
+<table>
+<tr><th>维度</th><th>占比</th><th>说明</th></tr>
+<tr><td><strong>功能完整性</strong></td><td>30%</td><td>所有模块是否正常工作</td></tr>
+<tr><td><strong>代码质量</strong></td><td>20%</td><td>结构清晰、注释充分、零依赖设计</td></tr>
+<tr><td><strong>技术深度</strong></td><td>20%</td><td>RAG、多Agent、ReAct 等原理的理解</td></tr>
+<tr><td><strong>前端体验</strong></td><td>15%</td><td>界面美观、流式输出、工具可视化</td></tr>
+<tr><td><strong>文档与测试</strong></td><td>15%</td><td>README、测试用例、分工文档</td></tr>
+</table>
+
+<hr>
+
+<p style="text-align:center;color:#64748b;margin-top:40px">
+文档生成时间：2026-10-08<br>
+项目仓库：https://github.com/CHD-Avril/AgentDesign
+</p>
+
+</body>
+</html>

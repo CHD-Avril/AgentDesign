@@ -1,7 +1,10 @@
-"""知识库 RAG 核心：文档切分、向量存储、相似度检索。
+"""知识库 RAG 核心：文档切分、向量存储、两阶段检索（召回+重排）。
 
 零第三方依赖：向量存 JSON 文件，余弦相似度纯 Python 计算。
-适合中小规模知识库（几千条文档块以内）；大规模可换 SQLite + numpy。
+高级特性：
+  - 混合检索：向量语义检索 + 关键词检索（BM25 简易版）
+  - 两阶段检索：先召回 top 20，再用 LLM 重排取 top 3-5
+  - 查询改写：搜索前先让 LLM 优化查询词
 """
 from __future__ import annotations
 
@@ -164,6 +167,155 @@ class KnowledgeBase:
 
         scored.sort(key=lambda x: x["score"], reverse=True)
         return scored[:top_k]
+
+    # ---- 关键词检索（简易 BM25 / 词频匹配）----
+    def _keyword_search(self, query: str, top_k: int = 20) -> list[dict[str, Any]]:
+        """关键词检索：基于词频的简易匹配（混合检索的一路）。"""
+        if not self.chunks:
+            return []
+        keywords = [w.lower() for w in re.findall(r"[\w\u4e00-\u9fa5]+", query) if len(w) > 1]
+        if not keywords:
+            return []
+
+        scored = []
+        for chunk in self.chunks:
+            text_lower = chunk.text.lower()
+            # 计算命中关键词的数量（简易 TF）
+            hits = sum(text_lower.count(kw) for kw in keywords)
+            if hits > 0:
+                # 归一化：命中数 / 文本长度
+                score = hits / max(len(chunk.text) / 100, 1)
+                scored.append({
+                    "text": chunk.text,
+                    "source": chunk.source,
+                    "score": round(score, 4),
+                    "chunk_index": chunk.chunk_index,
+                })
+
+        scored.sort(key=lambda x: x["score"], reverse=True)
+        return scored[:top_k]
+
+    def search_hybrid(self, query: str, top_k: int = 5, vector_weight: float = 0.7) -> list[dict[str, Any]]:
+        """混合检索：向量语义 + 关键词，加权合并。
+
+        :param vector_weight: 向量检索的权重（关键词权重 = 1 - vector_weight）
+        """
+        if not self.chunks:
+            return []
+
+        # 两路召回各取 top 20
+        vector_results = self.search(query, top_k=20)
+        keyword_results = self._keyword_search(query, top_k=20)
+
+        # 合并去重（按文本内容去重）
+        merged: dict[str, dict[str, Any]] = {}
+        for r in vector_results:
+            merged[r["text"]] = {
+                **r,
+                "vector_score": r["score"],
+                "keyword_score": 0.0,
+            }
+        for r in keyword_results:
+            if r["text"] in merged:
+                merged[r["text"]]["keyword_score"] = r["score"]
+            else:
+                merged[r["text"]] = {
+                    **r,
+                    "vector_score": 0.0,
+                    "keyword_score": r["score"],
+                }
+
+        # 加权综合打分
+        for item in merged.values():
+            # 归一化（简易：直接乘权重）
+            item["score"] = round(
+                item["vector_score"] * vector_weight +
+                item["keyword_score"] * (1 - vector_weight),
+                4,
+            )
+
+        results = sorted(merged.values(), key=lambda x: x["score"], reverse=True)
+        return results[:top_k]
+
+    # ---- 两阶段检索：召回 + Rerank ----
+    def search_with_rerank(
+        self,
+        query: str,
+        llm_client,
+        *,
+        recall_k: int = 20,    # 第一阶段召回多少条
+        final_k: int = 5,      # 第二阶段最终保留多少条
+    ) -> list[dict[str, Any]]:
+        """两阶段检索：先混合召回 top recall_k，再用 LLM 重排取 top final_k。
+
+        这是工业级 RAG 的标准做法：粗筛快、精排准。
+        """
+        if not self.chunks:
+            return []
+
+        # 第一阶段：混合召回（多取一点）
+        candidates = self.search_hybrid(query, top_k=recall_k)
+        if len(candidates) <= final_k:
+            return candidates
+
+        # 第二阶段：LLM 重排
+        prompt = f"""用户的问题是：{query}
+
+下面有 {len(candidates)} 段候选文档，请判断每段和问题的相关性，1-10 分。
+
+"""
+        for i, c in enumerate(candidates):
+            prompt += f"\n[{i+1}] {c['text'][:200]}...\n"
+
+        prompt += f"""
+请严格按 JSON 格式输出（不要输出其他内容）：
+{{
+  "scores": [{", ".join(["分数"] * len(candidates))}],
+  "reasoning": "简单说明"
+}}"""
+
+        try:
+            response = llm_client.chat([{"role": "user", "content": prompt}])
+            text = response.content.strip()
+            if text.startswith("```"):
+                text = text.split("```")[1]
+                if text.startswith("json"):
+                    text = text[4:]
+                text = text.strip()
+
+            import json as _json
+            data = _json.loads(text)
+            scores = data.get("scores", [])
+
+            # 给每条加上 rerank 分数
+            for i, c in enumerate(candidates):
+                if i < len(scores):
+                    c["rerank_score"] = float(scores[i])
+                else:
+                    c["rerank_score"] = c.get("score", 0)
+
+            # 按 rerank 分数排序
+            candidates.sort(key=lambda x: x.get("rerank_score", 0), reverse=True)
+            return candidates[:final_k]
+        except Exception:
+            # 重排失败就退回普通混合检索
+            return candidates[:final_k]
+
+    # ---- 查询改写 ----
+    @staticmethod
+    def rewrite_query(query: str, llm_client) -> str:
+        """搜索前先让 LLM 优化查询词（加关键词、补全语义）。"""
+        prompt = f"""用户的原始查询是："{query}"
+
+请把它改写成更适合搜索的关键词组合（更简洁、更精准），直接输出改写后的查询，不要解释。
+例如："什么是AI" → "人工智能 定义 原理"
+"""
+        try:
+            response = llm_client.chat([{"role": "user", "content": prompt}])
+            rewritten = response.content.strip().strip('"').strip("'")
+            return rewritten if rewritten else query
+        except Exception:
+            return query
 
     def list_sources(self) -> list[dict[str, Any]]:
         """列出知识库中所有文档来源及块数。"""

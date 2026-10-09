@@ -8,12 +8,14 @@ from __future__ import annotations
 import sys
 
 from agent.core import Agent
+from agent.episodic_memory import EpisodicMemory
 from agent.long_term_memory import LongTermMemory
 from agent.memory import Memory
 from agent.memory_extractor import MemoryExtractor
 from agent.multi_agent import MultiAgentOrchestrator
 from agent.planner import Planner
 from agent.rag import KnowledgeBase
+from agent.reflector import Reflector
 from agent.telemetry import Telemetry
 from config import Config
 from llm.embedding import EmbeddingClient
@@ -106,12 +108,17 @@ def create_agent(cfg: Config, *, use_mock: bool | None = None, interactive: bool
         except Exception:
             pass  # 多模态工具加载失败不影响主流程
 
-    # 记忆提取器（需要 LLM，mock 模式下跳过自动提取）
+    # 记忆提取器、规划器、反思器（需要 LLM，mock 模式下跳过）
     extractor = None
     planner = None
+    reflector = None
     if not use_mock:
         extractor = MemoryExtractor(llm, ltm)
         planner = Planner(llm)
+        reflector = Reflector(llm)  # 自我反思器
+
+    # 情景记忆（所有模式都可用，SQLite 本地存储）
+    episodic = EpisodicMemory(db_path=cfg.log_path().parent / "data" / "episodes.db")
 
     agent = Agent(
         llm,
@@ -124,6 +131,7 @@ def create_agent(cfg: Config, *, use_mock: bool | None = None, interactive: bool
         long_term_memory=ltm,
         memory_extractor=extractor,
         planner=planner,
+        reflector=reflector,  # 自我反思器
     )
 
     # 多Agent模式：用主管Agent替换普通Agent
@@ -140,5 +148,7 @@ def create_agent(cfg: Config, *, use_mock: bool | None = None, interactive: bool
     agent.telemetry = telemetry
     agent.knowledge_base = kb
     agent.long_term_memory = ltm
+    agent.episodic_memory = episodic  # 情景记忆
+    agent.reflector = reflector      # 反思器
     agent.orchestrator = orchestrator
     return agent, note
