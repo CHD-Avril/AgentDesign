@@ -26,6 +26,10 @@ class TokenUsage:
     completion_tokens: int = 0
     total_tokens: int = 0
 
+    @property
+    def total(self) -> int:
+        return self.total_tokens or self.prompt_tokens + self.completion_tokens
+
 
 @dataclass
 class LLMResponse:

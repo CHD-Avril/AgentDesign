@@ -15,7 +15,12 @@ ROOT = Path(__file__).resolve().parent.parent
 def _load(path: Path):
     spec = importlib.util.spec_from_file_location(path.stem, path)
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    try:
+        spec.loader.exec_module(module)
+    except SystemExit as err:
+        # test_all.py 是可独立执行的旧式脚本；正常退出不能提前结束整个测试集。
+        if err.code not in (None, 0):
+            raise RuntimeError(f"{path.name} exited with {err.code}") from err
     return module
 
 
@@ -23,7 +28,11 @@ def main() -> int:
     sys.path.insert(0, str(ROOT))
     passed, failed = 0, []
     for path in sorted(Path(__file__).parent.glob("test_*.py")):
-        module = _load(path)
+        try:
+            module = _load(path)
+        except Exception:
+            failed.append((str(path.name), traceback.format_exc()))
+            continue
         tests = [n for n in sorted(dir(module)) if n.startswith("test_")]
         for name in tests:
             try:

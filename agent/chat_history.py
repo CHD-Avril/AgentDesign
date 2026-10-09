@@ -14,10 +14,10 @@
 """
 from __future__ import annotations
 
-import json
 import sqlite3
 import threading
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -74,11 +74,13 @@ class ChatHistory:
             """)
             self._conn.commit()
 
-    def create_conversation(self, first_message: str) -> str:
+    def create_conversation(self, first_message: str, conv_id: str | None = None) -> str:
         """创建一段新对话，返回对话 id。"""
-        conv_id = f"conv_{int(time.time() * 1000)}"
+        conv_id = conv_id or f"conv_{uuid.uuid4().hex}"
         title = first_message[:30] + ("..." if len(first_message) > 30 else "")
         now = time.time()
+        if not self._conn:
+            return conv_id
         with self._lock:
             self._conn.execute(
                 "INSERT INTO conversations (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)",
@@ -86,6 +88,44 @@ class ChatHistory:
             )
             self._conn.commit()
         return conv_id
+
+    def get_conversation(self, conv_id: str) -> Conversation | None:
+        if not self._conn:
+            return None
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT c.*, COUNT(m.id) AS msg_count FROM conversations c "
+                "LEFT JOIN messages m ON c.id = m.conversation_id WHERE c.id = ? GROUP BY c.id",
+                (conv_id,),
+            ).fetchone()
+        return Conversation(row["id"], row["title"], row["created_at"], row["updated_at"], row["msg_count"]) if row else None
+
+    def save_turn(self, conv_id: str, user: str, assistant: str) -> None:
+        """使用稳定的会话 ID，原子保存一整轮对话。"""
+        if not self._conn:
+            return
+        now = time.time()
+        title = user[:30] + ("..." if len(user) > 30 else "")
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT OR IGNORE INTO conversations VALUES (?, ?, ?, ?)",
+                (conv_id, title, now, now),
+            )
+            self._conn.executemany(
+                "INSERT INTO messages (conversation_id, role, content, timestamp) VALUES (?, ?, ?, ?)",
+                [(conv_id, "user", user, now), (conv_id, "assistant", assistant, now)],
+            )
+            self._conn.execute("UPDATE conversations SET updated_at = ? WHERE id = ?", (now, conv_id))
+
+    def rename_conversation(self, conv_id: str, title: str) -> None:
+        if self._conn:
+            with self._lock, self._conn:
+                self._conn.execute("UPDATE conversations SET title = ? WHERE id = ?", (title, conv_id))
+
+    def close(self) -> None:
+        if self._conn:
+            self._conn.close()
+            self._conn = None
 
     def add_message(self, conv_id: str, role: str, content: str) -> None:
         """往对话里加一条消息。"""

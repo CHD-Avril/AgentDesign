@@ -225,13 +225,15 @@ class _FileMixin:
         - 相对路径：相对于 work_dir（比如 "notes.txt"）
         - 绝对路径：直接用（比如 "C:/Users/xxx/Desktop/notes.txt"）
         """
-        p = Path(path_str)
+        # 在 macOS/Linux 上也识别 Windows 分隔符，避免把越界路径当作文件名。
+        normalized = path_str.replace("\\", "/")
+        p = Path(normalized)
 
         # 1. 解析成绝对路径
         if p.is_absolute():
             target = p.resolve()
         else:
-            target = (self.work_dir / path_str).resolve()
+            target = (self.work_dir / normalized).resolve()
 
         # 2. 先检查黑名单（系统目录绝对禁止）
         for forbidden in self._FORBIDDEN_ROOTS:

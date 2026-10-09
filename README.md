@@ -7,6 +7,22 @@
 
 ---
 
+## 新版智能工作台
+
+React 前端已接入后端 API，提供中文对话工作台、历史搜索与管理、工具详情、知识库、长期记忆和运行洞察；支持流式输出、Markdown 导出、深浅主题与手机布局。
+
+```bash
+cd frontend
+npm ci
+npm run build
+cd ..
+python3 server.py --mock --port 8000
+```
+
+浏览器打开 <http://127.0.0.1:8000>。配置根目录 `.env` 中的 API Key 后，移除 `--mock` 并重启以使用真实模型。未构建 React 前端时，Python 仍提供原有单文件界面。开发代理、检查命令与使用限制见 [前端说明](frontend/README.md)。
+
+---
+
 ## 特性
 
 ### 核心能力
