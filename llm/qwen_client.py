@@ -56,6 +56,7 @@ class QwenClient(LLMClient):
             payload["enable_search"] = True
         if tools:
             payload["tools"] = tools
+            payload["tool_choice"] = "auto"  # 明确告诉模型：可以自动选择调用工具
         if kwargs.get("stream"):
             raise NotImplementedError("请使用 chat_stream() 进行流式对话。")
 
@@ -84,6 +85,7 @@ class QwenClient(LLMClient):
             payload["enable_search"] = True
         if tools:
             payload["tools"] = tools
+            payload["tool_choice"] = "auto"
 
         request = urllib.request.Request(
             self._endpoint,
