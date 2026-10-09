@@ -80,6 +80,19 @@ aside.collapsed{margin-left:-280px}
 .fact-list li{margin-bottom:4px;list-style:none;padding-left:12px;position:relative}
 .fact-list li::before{content:'•';position:absolute;left:0;color:var(--accent)}
 
+/* 历史对话列表 */
+.conv-item{
+  padding:8px 10px;border-radius:8px;font-size:12px;color:var(--muted);
+  cursor:pointer;margin-bottom:2px;transition:all .2s;
+  border-left:3px solid transparent;
+}
+.conv-item:hover{background:var(--panel);color:var(--text)}
+.conv-item.active{background:var(--panel2);color:var(--text);border-left-color:var(--accent)}
+.conv-item .conv-title{
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500;
+}
+.conv-item .conv-time{font-size:10px;color:var(--dim);margin-top:2px}
+
 /* ===== 聊天区 ===== */
 .chat-area{flex:1 1 auto;display:flex;flex-direction:column;overflow:hidden}
 .chat-scroll{flex:1 1 auto;overflow-y:auto;scroll-behavior:smooth}
@@ -225,6 +238,16 @@ aside.collapsed{margin-left:-280px}
 <div class="main">
   <!-- 左侧边栏 -->
   <aside id="sidebar">
+    <div class="sidebar-section" style="border-bottom: 2px solid var(--accent);">
+      <h3>💬 历史对话</h3>
+      <div id="convList" style="max-height: 200px; overflow-y: auto;">
+        <div style="font-size:12px;color:var(--dim)">加载中...</div>
+      </div>
+      <button onclick="newConversation()" style="width:100%;margin-top:8px;padding:6px;background:var(--accent);color:white;border:none;border-radius:6px;cursor:pointer;font-size:12px;">
+        + 新建对话
+      </button>
+    </div>
+
     <div class="sidebar-section">
       <h3>📊 运行统计</h3>
       <div class="sidebar-item">
@@ -341,6 +364,7 @@ async function init() {
     fetchKnowledge(),
     fetchMemory(),
     fetchTools(),
+    fetchConversations(),  // 加载历史对话
   ]);
 }
 
@@ -414,6 +438,61 @@ async function fetchTools() {
       `<span class="tag" title="${t.function.description}">${t.function.name}</span>`
     ).join('');
   } catch {}
+}
+
+// ===== 历史对话 =====
+let currentConvId = null;
+
+async function fetchConversations() {
+  try {
+    const r = await fetch('/v1/conversations');
+    const d = await r.json();
+    const convs = d.conversations || [];
+    if (!convs.length) {
+      $('convList').innerHTML = '<div style="font-size:12px;color:var(--dim);padding:8px;">暂无历史对话</div>';
+      return;
+    }
+    $('convList').innerHTML = convs.map(c => {
+      const date = new Date(c.updated_at * 1000);
+      const timeStr = `${date.getMonth()+1}/${date.getDate()} ${date.getHours()}:${String(date.getMinutes()).padStart(2,'0')}`;
+      return `
+        <div class="conv-item ${c.id === currentConvId ? 'active' : ''}" onclick="loadConversation('${c.id}')">
+          <div class="conv-title">${c.title}</div>
+          <div class="conv-time">${timeStr} · ${c.message_count}条消息</div>
+        </div>
+      `;
+    }).join('');
+  } catch {
+    $('convList').innerHTML = '<div style="font-size:12px;color:var(--red);padding:8px;">加载失败</div>';
+  }
+}
+
+async function loadConversation(convId) {
+  currentConvId = convId;
+  // 刷新列表高亮
+  fetchConversations();
+  // 加载这个对话的消息
+  try {
+    const r = await fetch(`/v1/conversations/${convId}`);
+    const d = await r.json();
+    // 清空聊天区，显示历史消息
+    chatInner.innerHTML = '';
+    (d.messages || []).forEach(m => {
+      addMessage(m.role, m.content);
+    });
+    // 隐藏空状态
+    if (emptyState) emptyState.style.display = 'none';
+  } catch {
+    alert('加载对话失败');
+  }
+}
+
+function newConversation() {
+  currentConvId = null;
+  sessionId = null;
+  chatInner.innerHTML = '';
+  // 恢复空状态
+  location.reload();
 }
 
 // ===== 聊天 =====

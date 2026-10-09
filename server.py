@@ -28,6 +28,7 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from agent.chat_history import ChatHistory
 from agent.core import Agent
 from agent.memory import Memory
 from config import Config
@@ -130,6 +131,39 @@ class Handler(BaseHTTPRequestHandler):
                 })
             else:
                 self._send_json(200, {"preferences": {}, "facts": []})
+        elif path == "/v1/conversations":
+            # 对话历史列表
+            history = getattr(self.server, "chat_history", None)
+            if history:
+                convs = history.list_conversations(limit=50)
+                self._send_json(200, {
+                    "conversations": [
+                        {
+                            "id": c.id,
+                            "title": c.title,
+                            "updated_at": c.updated_at,
+                            "message_count": c.message_count,
+                        }
+                        for c in convs
+                    ]
+                })
+            else:
+                self._send_json(200, {"conversations": []})
+        elif path.startswith("/v1/conversations/"):
+            # 获取某段对话的详细消息
+            conv_id = path.split("/")[-1]
+            history = getattr(self.server, "chat_history", None)
+            if history:
+                messages = history.get_messages(conv_id)
+                self._send_json(200, {
+                    "id": conv_id,
+                    "messages": [
+                        {"role": m.role, "content": m.content, "timestamp": m.timestamp}
+                        for m in messages
+                    ]
+                })
+            else:
+                self._send_json(404, {"error": "history not available"})
         elif path == "/" or path == "/index.html":
             self._serve_frontend()
         elif path == "/v1/chat/stream":
@@ -162,6 +196,19 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         usage = memory.usage()
+
+        # 自动保存到对话历史
+        history = getattr(self.server, "chat_history", None)
+        if history:
+            # 检查这个 session 是不是已经有对话了，没有就新建
+            conv_id = sid  # 先用 session_id 当对话 id（简单实现）
+            # 简单判断：如果消息数是 1（第一轮），就新建对话
+            if len(memory.messages()) <= 2:  # user + assistant
+                conv_id = history.create_conversation(message)
+            # 保存用户消息和助手回复
+            history.add_message(conv_id, "user", message)
+            history.add_message(conv_id, "assistant", result.content)
+
         self._send_json(200, {
             "reply": result.content,
             "session_id": sid,
@@ -228,6 +275,17 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         usage = memory.usage()
+
+        # 自动保存到对话历史
+        history = getattr(self.server, "chat_history", None)
+        if history:
+            if len(memory.messages()) <= 2:
+                conv_id = history.create_conversation(message)
+            else:
+                conv_id = sid
+            history.add_message(conv_id, "user", message)
+            history.add_message(conv_id, "assistant", result.content)
+
         sse("done", {
             "turns": result.turns,
             "interrupted": result.interrupted,
@@ -260,6 +318,10 @@ def main() -> None:
     httpd.telemetry = getattr(agent, "telemetry", None)
     httpd.knowledge_base = getattr(agent, "knowledge_base", None)
     httpd.long_term_memory = getattr(agent, "long_term_memory", None)
+
+    # 对话历史（SQLite 持久化）
+    history_path = cfg.log_path().parent / "data" / "chat_history.db"
+    httpd.chat_history = ChatHistory(db_path=history_path)
 
     print(f"Agent 服务已启动：http://{args.host}:{args.port}")
     print("网页前端：浏览器打开上面的地址即可对话")
