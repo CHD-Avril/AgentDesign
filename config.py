@@ -1,9 +1,8 @@
 """配置加载：从环境变量或 .env 文件读取，所有配置都有默认值。
 
 设计要点：
-- 默认后端是 Qwen（阿里云百炼）的 OpenAI 兼容接口；改 QWEN_BASE_URL + QWEN_MODEL 即可接入
-  任何 OpenAI 兼容的远端服务。
-- 零第三方依赖（不用 python-dotenv），内置极简 .env 解析器。
+- LLM_PROVIDER 支持 qwen（OpenAI 兼容）和 zai（Anthropic Messages）。
+- 配置解析无需第三方依赖；Z.ai 客户端按需加载 anthropic SDK。
 """
 from __future__ import annotations
 
@@ -71,6 +70,25 @@ class Config:
     timeout: int = 60          # 单次 HTTP 请求超时（秒）
     max_retries: int = 3       # 网络错误 / 限流重试次数
     enable_search: bool = True  # 开启模型自带联网搜索（enable_search），无需额外 Key
+    provider: str = "qwen"  # 保留旧配置兼容；新 .env 模板默认使用 zai
+    max_output_tokens: int = 4096
+    embedding_api_key: str = ""
+    embedding_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    embedding_model: str = "text-embedding-v3"
+
+    # 音频服务独立配置；文本模型的 Key / 地址不会自动用于语音接口。
+    media_api_key: str = ""
+    media_provider: str = "auto"  # 自动复用 Qwen Key；无 Qwen Key 时选择 OpenAI Audio API
+    media_base_url: str = "https://api.openai.com/v1"
+    media_transcribe_model: str = "whisper-1"
+    media_tts_model: str = "tts-1"
+    media_voice: str = "alloy"
+    media_timeout: int = 120
+    qwen_asr_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    qwen_tts_base_url: str = "https://dashscope.aliyuncs.com/api/v1"
+    qwen_asr_model: str = "qwen3-asr-flash"
+    qwen_tts_model: str = "qwen3-tts-flash"
+    vision_model: str = "qwen-vl-plus"  # Qwen 视频抽帧使用视觉模型
 
     # ---- Agent 循环 ----
     max_turns: int = 12        # 单次任务最大“思考→调工具”轮数
@@ -91,14 +109,48 @@ class Config:
     @classmethod
     def from_env(cls) -> "Config":
         load_dotenv()
-        api_key = _env("QWEN_API_KEY", "") or _env("DASHSCOPE_API_KEY", "")
+        provider = _env("LLM_PROVIDER", "zai" if os.environ.get("ZAI_API_KEY") else "qwen").lower()
+        if provider not in ("zai", "qwen"):
+            raise ValueError("LLM_PROVIDER 只支持 zai 或 qwen")
+        if provider == "zai":
+            api_key = _env("ZAI_API_KEY", "")
+            base_url = _env("ZAI_BASE_URL", "https://api.z.ai/api/anthropic")
+            model = _env("ZAI_MODEL", "glm-5.3-flash")
+        else:
+            api_key = _env("QWEN_API_KEY", "") or _env("DASHSCOPE_API_KEY", "")
+            base_url = _env("QWEN_BASE_URL", cls.base_url)
+            model = _env("QWEN_MODEL", cls.model)
+        qwen_key = _env("QWEN_API_KEY", "") or _env("DASHSCOPE_API_KEY", "")
+        media_provider = _env("MEDIA_PROVIDER", "auto").lower()
+        if media_provider == "auto":
+            media_provider = "qwen" if qwen_key else "openai"
+        if media_provider not in ("qwen", "openai"):
+            raise ValueError("MEDIA_PROVIDER 只支持 auto、qwen 或 openai")
+        qwen_media_base = _env("QWEN_BASE_URL", cls.qwen_asr_base_url).rstrip("/")
+        qwen_tts_base = (qwen_media_base.removesuffix("/compatible-mode/v1") + "/api/v1"
+                         if qwen_media_base.endswith("/compatible-mode/v1") else cls.qwen_tts_base_url)
         return cls(
             api_key=api_key,
-            base_url=_env("QWEN_BASE_URL", cls.base_url),
-            model=_env("QWEN_MODEL", cls.model),
+            provider=provider, base_url=base_url, model=model,
+            max_output_tokens=max(1024, int(_env("LLM_MAX_TOKENS", "4096"))),
+            embedding_api_key=_env("EMBEDDING_API_KEY", api_key if provider == "qwen" else ""),
+            embedding_base_url=_env("EMBEDDING_BASE_URL", base_url if provider == "qwen" else cls.embedding_base_url),
+            embedding_model=_env("EMBEDDING_MODEL", cls.embedding_model),
+            media_provider=media_provider,
+            media_api_key=_env("MEDIA_API_KEY", qwen_key if media_provider == "qwen" else ""),
+            media_base_url=_env("MEDIA_BASE_URL", cls.media_base_url),
+            media_transcribe_model=_env("MEDIA_TRANSCRIBE_MODEL", cls.media_transcribe_model),
+            media_tts_model=_env("MEDIA_TTS_MODEL", cls.media_tts_model),
+            media_voice=_env("MEDIA_VOICE", _env("QWEN_TTS_VOICE", "Cherry") if media_provider == "qwen" else cls.media_voice),
+            media_timeout=int(_env("MEDIA_TIMEOUT", str(cls.media_timeout))),
+            qwen_asr_base_url=_env("QWEN_ASR_BASE_URL", qwen_media_base),
+            qwen_tts_base_url=_env("QWEN_TTS_BASE_URL", qwen_tts_base),
+            qwen_asr_model=_env("QWEN_ASR_MODEL", cls.qwen_asr_model),
+            qwen_tts_model=_env("QWEN_TTS_MODEL", cls.qwen_tts_model),
+            vision_model=_env("QWEN_VISION_MODEL", cls.vision_model),
             temperature=float(_env("QWEN_TEMPERATURE", str(cls.temperature))),
-            timeout=int(_env("QWEN_TIMEOUT", str(cls.timeout))),
-            max_retries=int(_env("QWEN_MAX_RETRIES", str(cls.max_retries))),
+            timeout=int(_env("LLM_TIMEOUT", _env("QWEN_TIMEOUT", "90" if provider == "zai" else str(cls.timeout)))),
+            max_retries=int(_env("LLM_MAX_RETRIES", _env("QWEN_MAX_RETRIES", str(cls.max_retries)))),
             enable_search=_env("QWEN_ENABLE_SEARCH", "true").strip().lower() in ("1", "true", "yes", "on"),
             max_turns=int(_env("AGENT_MAX_TURNS", str(cls.max_turns))),
             context_tokens=int(_env("AGENT_CONTEXT_TOKENS", str(cls.context_tokens))),

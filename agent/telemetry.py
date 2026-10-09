@@ -71,7 +71,8 @@ class Telemetry:
         persist: bool = True,
     ) -> None:
         self.model = model
-        self._pricing = MODEL_PRICING.get(model, _DEFAULT_PRICING)
+        self.pricing_known = model in MODEL_PRICING or model == "mock"
+        self._pricing = MODEL_PRICING.get(model, (0.0, 0.0))
 
         # 累计统计
         self.total_prompt_tokens: int = 0
@@ -219,6 +220,7 @@ class Telemetry:
             "completion_tokens": self.total_completion_tokens,
             "total_tokens": self.total_prompt_tokens + self.total_completion_tokens,
             "cost_yuan": round(self.total_cost_yuan, 4),
+            "cost_available": self.pricing_known,
             "avg_llm_latency_ms": round(
                 self.llm_total_latency_ms / max(1, self.llm_call_count), 0
             ),

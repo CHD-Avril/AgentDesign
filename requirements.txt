@@ -1,7 +1,2 @@
-# 核心功能零第三方依赖：仅使用 Python 3.9+ 标准库（urllib / http.server / zoneinfo）。
-# 无需安装任何包即可运行：
-#   python main.py "你的问题"
-
-# 可选增强（不装也能跑）：
-#   tzdata      Windows 下若 datetime_now 报 ZoneInfoNotFoundError 时安装
-#   pytest      用 pytest 跑 tests/ 更美观（本仓库自带零依赖运行器）
+# Z.ai Anthropic Messages 接口。Qwen 与离线模式仍可仅使用标准库。
+anthropic>=0.125.0,<1

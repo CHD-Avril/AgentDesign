@@ -29,6 +29,7 @@ class QwenClient(LLMClient):
         timeout: int = 60,
         max_retries: int = 3,
         enable_search: bool = False,
+        max_tokens: int = 4096,
     ) -> None:
         if not api_key:
             raise ValueError("缺少 API Key：请在 .env 中配置 QWEN_API_KEY（DASHSCOPE_API_KEY 亦可）。")
@@ -38,6 +39,7 @@ class QwenClient(LLMClient):
         self.timeout = timeout
         self.max_retries = max_retries
         self.enable_search = enable_search
+        self.max_tokens = max_tokens
         self._endpoint = base_url.rstrip("/") + "/chat/completions"
 
     # ---------------- 核心接口 ----------------
@@ -51,6 +53,7 @@ class QwenClient(LLMClient):
             "model": self.model,
             "messages": messages,
             "temperature": float(kwargs.get("temperature", self.temperature)),
+            "max_tokens": int(kwargs.get("max_tokens", self.max_tokens)),
         }
         if self.enable_search or kwargs.get("enable_search"):
             payload["enable_search"] = True
@@ -78,6 +81,7 @@ class QwenClient(LLMClient):
             "model": self.model,
             "messages": messages,
             "temperature": float(kwargs.get("temperature", self.temperature)),
+            "max_tokens": int(kwargs.get("max_tokens", self.max_tokens)),
             "stream": True,
         }
         if self.enable_search or kwargs.get("enable_search"):

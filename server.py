@@ -21,6 +21,7 @@ from agent.core import Agent
 from agent.memory import Memory
 from config import Config
 from factory import create_agent
+from tools.app_builder import APP_PREVIEW_CSP, GeneratedAppStore
 
 for _stream in (sys.stdout, sys.stderr):
     try:
@@ -33,6 +34,11 @@ FRONTEND = ROOT / "web" / "agent-chat.html"
 FRONTEND_DIST = ROOT / "frontend" / "dist"
 # 每个服务实例维护独立的会话缓存；同一会话的同时写入返回 409。
 SESSION_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+MEDIA_FILE = re.compile(r"^[0-9a-f]{32}\.(?:mp3|wav|m4a|ogg|opus|aac|flac|mp4|webm|mov|png|jpg|jpeg|webp|gif)$")
+MEDIA_TYPES = {".mp3": "audio/mpeg", ".wav": "audio/wav", ".m4a": "audio/mp4",
+               ".ogg": "audio/ogg", ".opus": "audio/ogg", ".aac": "audio/aac", ".flac": "audio/flac", ".mp4": "video/mp4",
+               ".webm": "video/webm", ".mov": "video/quicktime", ".png": "image/png",
+               ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif"}
 
 
 class _ClientGone(Exception):
@@ -45,7 +51,7 @@ class Handler(BaseHTTPRequestHandler):
     def _cors_headers(self) -> None:
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-File-Name")
 
     def _send_json(self, code: int, payload: dict) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -121,7 +127,30 @@ class Handler(BaseHTTPRequestHandler):
                 "tools": self.server.tools.names(), "exec_mode": self._exec_mode(),
                 "mode": "mock" if self.server.model_name == "mock" else "live",
                 "context_tokens": self.server.cfg.context_tokens,
+                "provider": self.server.cfg.provider,
+                "max_output_tokens": self.server.cfg.max_output_tokens,
+                "audio_configured": bool(getattr(self.server.cfg, "media_api_key", "")),
             })
+        elif path == "/v1/apps":
+            store = GeneratedAppStore(self.server.cfg.work_path())
+            self._send_json(200, {"apps": store.list_apps()})
+        elif path.startswith("/v1/apps/") and path.endswith("/preview"):
+            app_id = path[len("/v1/apps/"):-len("/preview")]
+            try:
+                target = GeneratedAppStore(self.server.cfg.work_path()).preview_path(app_id)
+                if target is None:
+                    raise ValueError("应用不存在")
+                self._serve_artifact(target, "text/html; charset=utf-8", csp=APP_PREVIEW_CSP)
+            except (ValueError, OSError):
+                self._send_json(404, {"error": "应用不存在"})
+        elif path.startswith("/v1/media/"):
+            name = path[len("/v1/media/"):]
+            root = self.server.cfg.work_path() / "media"
+            target = root / name
+            if not MEDIA_FILE.fullmatch(name) or target.is_symlink() or not target.is_file() or root.is_symlink():
+                self._send_json(404, {"error": "媒体文件不存在"})
+                return
+            self._serve_artifact(target, MEDIA_TYPES[target.suffix])
         elif path == "/v1/tools":
             self._send_json(200, {"tools": self.server.tools.schemas()})
         elif path == "/v1/stats":
@@ -133,6 +162,7 @@ class Handler(BaseHTTPRequestHandler):
                 "enabled": kb is not None,
                 "total_chunks": len(kb) if kb is not None else 0,
                 "sources": kb.list_sources() if kb is not None else [],
+                "note": getattr(self.server.agent_template, "knowledge_note", ""),
             })
         elif path == "/v1/memory":
             ltm = getattr(self.server, "long_term_memory", None)
@@ -166,6 +196,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = urllib.parse.urlparse(self.path).path
+        if path == "/v1/uploads":
+            self._upload_media()
+            return
         if path not in ("/v1/chat", "/v1/chat/stream"):
             self._send_json(404, {"error": "not found"})
             return
@@ -175,6 +208,42 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(400, {"error": f"无效请求体：{err}"})
             return
         self._handle_chat(payload, stream=path.endswith("/stream"))
+
+    def _upload_media(self) -> None:
+        try:
+            name = urllib.parse.unquote(self.headers.get("X-File-Name", ""))
+            suffix = Path(name).suffix.lower()
+            length = int(self.headers.get("Content-Length", "0"))
+            if suffix not in MEDIA_TYPES:
+                raise ValueError("仅支持常见音频、视频和图片格式")
+            if not 0 < length <= 32 * 1024 * 1024:
+                raise ValueError("文件需为 1 字节至 32 MB")
+            root = self.server.cfg.work_path() / "media"
+            if root.is_symlink():
+                raise ValueError("媒体目录不可为符号链接")
+            root.mkdir(parents=True, exist_ok=True)
+            filename = uuid.uuid4().hex + suffix
+            content = self.rfile.read(length)
+            if len(content) != length:
+                raise ValueError("文件上传不完整")
+            (root / filename).write_bytes(content)
+            self._send_json(201, {"file": "media/" + filename,
+                                  "media_url": "/v1/media/" + filename,
+                                  "name": Path(name).name[:150], "size": length})
+        except (ValueError, OSError) as error:
+            self._send_json(400, {"error": str(error)})
+
+    def _serve_artifact(self, target: Path, content_type: str, *, csp: str = "") -> None:
+        body = target.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Cache-Control", "no-store")
+        if csp:
+            self.send_header("Content-Security-Policy", csp)
+        self.end_headers()
+        self.wfile.write(body)
 
     def _handle_chat(self, payload: dict, *, stream: bool) -> None:
         try:

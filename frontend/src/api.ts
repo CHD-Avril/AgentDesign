@@ -3,6 +3,9 @@ export interface Health {
   model: string
   tools: string[]
   exec_mode: string
+  provider?: string
+  max_output_tokens?: number
+  audio_configured?: boolean
   mode: 'mock' | 'live'
   context_tokens: number
 }
@@ -49,10 +52,12 @@ export interface Stats {
   total_tokens: number
   prompt_tokens: number
   completion_tokens: number
+  cost_available?: boolean
   cost_yuan: number
   avg_llm_latency_ms: number
 }
 export interface Knowledge {
+  note?: string
   enabled: boolean
   total_chunks: number
   sources: string[]

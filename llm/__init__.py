@@ -2,5 +2,6 @@
 from .base import LLMClient, LLMResponse, ToolCall
 from .mock_client import MockClient, ScriptedMockClient
 from .qwen_client import QwenClient
+from .anthropic_client import AnthropicClient
 
-__all__ = ["LLMClient", "LLMResponse", "ToolCall", "QwenClient", "MockClient", "ScriptedMockClient"]
+__all__ = ["LLMClient", "LLMResponse", "ToolCall", "QwenClient", "AnthropicClient", "MockClient", "ScriptedMockClient"]

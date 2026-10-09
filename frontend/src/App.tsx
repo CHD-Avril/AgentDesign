@@ -51,11 +51,13 @@ import type {
   Usage,
 } from './api'
 import './App.css'
+import Studio from './Studio'
 
-type View = 'chat' | 'tools' | 'knowledge' | 'memory' | 'stats'
+type View = 'chat' | 'studio' | 'tools' | 'knowledge' | 'memory' | 'stats'
 type Dialog = 'search' | 'settings' | 'help' | null
 const navigation = [
   { id: 'chat', label: '对话工作台', icon: MessageSquare },
+  { id: 'studio', label: '创作工坊', icon: Sparkles },
   { id: 'tools', label: '工具箱', icon: Wrench },
   { id: 'knowledge', label: '知识库', icon: BookOpen },
   { id: 'memory', label: '长期记忆', icon: Brain },
@@ -122,6 +124,12 @@ const toolLabels: Record<string, string> = {
   knowledge_list: '知识来源',
   image_understand: '图像理解',
   image_generate: '图像生成',
+  app_generate: '生成网页应用',
+  audio_transcribe: '音频转写',
+  text_to_speech: '文字配音',
+  voice_chat: '语音对话',
+  podcast_generate: '生成播客',
+  video_analyze: '视频分析',
 }
 const formatNumber = (value = 0) => new Intl.NumberFormat('zh-CN').format(value)
 const dateLabel = (timestamp: number) =>
@@ -131,6 +139,12 @@ const dateLabel = (timestamp: number) =>
   })
 const getError = (error: unknown) =>
   error instanceof Error ? error.message : '发生未知错误，请重试'
+const mediaArtifact = (tool: { name: string; result: string }) =>
+  ['text_to_speech', 'voice_chat', 'podcast_generate'].includes(tool.name)
+    ? tool.result.match(
+        /"media_url"\s*:\s*"(\/v1\/media\/[a-f0-9]{32}\.(?:mp3|wav|m4a|ogg|opus|aac|flac))"/,
+      )?.[1]
+    : undefined
 const readPreference = (key: string, fallback: string) => {
   try {
     return localStorage.getItem(key) || fallback
@@ -898,6 +912,37 @@ function App() {
                                 </div>
                               </details>
                             ))}
+                            {m.tools?.map((tool, index) => {
+                              const audio = mediaArtifact(tool)
+                              return audio ? (
+                                <div
+                                  className="voice-artifact"
+                                  key={`voice-${index}`}
+                                >
+                                  <span>AI 生成语音</span>
+                                  <audio
+                                    controls
+                                    preload="metadata"
+                                    src={audio}
+                                  />
+                                  <a href={audio} download>
+                                    下载音频
+                                  </a>
+                                </div>
+                              ) : tool.name === 'app_generate' &&
+                                tool.ok &&
+                                tool.result.includes('preview_url') ? (
+                                <button
+                                  className="app-artifact-link"
+                                  key={`app-${index}`}
+                                  onClick={() => navigate('studio')}
+                                >
+                                  <Code2 size={15} />
+                                  应用已生成，前往创作工坊预览
+                                  <ArrowRight size={14} />
+                                </button>
+                              ) : null
+                            })}
                             <div className="markdown">
                               {m.role === 'assistant' ? (
                                 <Markdown
@@ -1064,7 +1109,7 @@ function App() {
                   <div className="composer-footnote">
                     <span>
                       {health?.mode === 'mock'
-                        ? '当前为离线演示，配置 Qwen API Key 后即可使用真实模型。'
+                        ? '当前为离线演示，配置模型 API Key 后即可使用真实模型。'
                         : 'AI 也可能出错，请核实重要信息。'}
                     </span>
                     <span>
@@ -1078,28 +1123,43 @@ function App() {
               <div className="page-content">
                 <div className="page-intro">
                   <span className="eyebrow">
-                    {view === 'tools'
-                      ? 'CAPABILITIES'
-                      : view === 'knowledge'
-                        ? 'KNOWLEDGE BASE'
-                        : view === 'memory'
-                          ? 'LONG-TERM MEMORY'
-                          : 'OBSERVABILITY'}
+                    {view === 'studio'
+                      ? 'CREATIVE STUDIO'
+                      : view === 'tools'
+                        ? 'CAPABILITIES'
+                        : view === 'knowledge'
+                          ? 'KNOWLEDGE BASE'
+                          : view === 'memory'
+                            ? 'LONG-TERM MEMORY'
+                            : 'OBSERVABILITY'}
                   </span>
                   <h1>
                     {activeLabel}
                     <span className="title-dot">.</span>
                   </h1>
                   <p>
-                    {view === 'tools'
-                      ? '让 AI 有所作为。每一个工具，都是从想法到行动的一座桥。'
-                      : view === 'knowledge'
-                        ? '让你的资料，成为 AI 的知识。连接上下文，找到更贴近你的答案。'
-                        : view === 'memory'
-                          ? '记住有意义的事，让每一次对话都更了解你。'
-                          : '每一次调用，都有迹可循。了解用量，让工作更有把握。'}
+                    {view === 'studio'
+                      ? '把需求变成应用，让文字拥有声音，读懂视频里的故事。'
+                      : view === 'tools'
+                        ? '让 AI 有所作为。每一个工具，都是从想法到行动的一座桥。'
+                        : view === 'knowledge'
+                          ? '让你的资料，成为 AI 的知识。连接上下文，找到更贴近你的答案。'
+                          : view === 'memory'
+                            ? '记住有意义的事，让每一次对话都更了解你。'
+                            : '每一次调用，都有迹可循。了解用量，让工作更有把握。'}
                   </p>
                 </div>
+                {view === 'studio' && (
+                  <Studio
+                    health={health}
+                    busy={busy}
+                    onSettings={() => setDialog('settings')}
+                    onPrompt={(prompt) => {
+                      navigate('chat')
+                      void send(undefined, prompt)
+                    }}
+                  />
+                )}
                 {view === 'tools' && (
                   <>
                     <div className="section-toolbar">
@@ -1201,7 +1261,7 @@ function App() {
                         description={
                           knowledge?.enabled
                             ? '在对话中提供文本，让 Agent 使用 knowledge_add 保存，之后即可检索。'
-                            : '配置 API Key 并重启服务，启用文档嵌入与语义检索。'
+                            : '配置独立的 Embedding 服务并重启，启用文档嵌入与语义检索。'
                         }
                         action={
                           knowledge?.enabled ? '去添加知识' : '查看连接说明'
@@ -1298,7 +1358,11 @@ function App() {
                       />
                       <Metric
                         label="估算费用"
-                        value={`¥ ${stats?.cost_yuan?.toFixed(4) || '0.0000'}`}
+                        value={
+                          stats?.cost_available === false
+                            ? '暂无单价'
+                            : `¥ ${stats?.cost_yuan?.toFixed(4) || '0.0000'}`
+                        }
                         icon={Activity}
                       />
                     </div>
@@ -1454,7 +1518,7 @@ function App() {
                   <small>
                     {knowledge?.enabled
                       ? `${knowledge.sources.length} 个知识来源`
-                      : '等待配置模型连接'}
+                      : '等待配置 Embedding'}
                   </small>
                 </div>
                 <ChevronRight size={14} />
@@ -1595,10 +1659,29 @@ function App() {
               模型连接
             </span>
             <p>
-              在项目根目录的 <code>.env</code> 中配置 <code>QWEN_API_KEY</code>{' '}
-              和 <code>QWEN_MODEL</code>，然后重启 Python 服务。启动时使用{' '}
-              <code>--mock</code> 会强制保持演示模式。
+              在项目根目录的 <code>.env</code> 中选择服务：
+              <br />
+              GLM：<code>LLM_PROVIDER=zai</code>，配置 <code>ZAI_API_KEY</code>{' '}
+              与 <code>ZAI_MODEL</code>。<br />
+              Qwen：<code>LLM_PROVIDER=qwen</code>，配置{' '}
+              <code>QWEN_API_KEY</code> 与 <code>QWEN_MODEL</code>。<br />
+              修改后重启 Python 服务。<code>--mock</code> 会强制保持演示模式。
+              <br />
+              语音服务：<code>MEDIA_PROVIDER=auto</code> 时使用 Qwen Key
+              接入百炼转写与配音；也可选择 <code>openai</code> 并单独配置{' '}
+              <code>MEDIA_API_KEY</code>、<code>MEDIA_BASE_URL</code>
+              。视频分析需要安装 FFmpeg。
             </p>
+            <div className="connection-detail">
+              <span>当前服务</span>
+              <strong>
+                {health?.provider === 'zai'
+                  ? 'Z.ai / Anthropic'
+                  : health?.provider === 'qwen'
+                    ? 'Qwen / OpenAI 兼容'
+                    : '未连接'}
+              </strong>
+            </div>
             <div className="connection-detail">
               <span>当前模型</span>
               <strong>{health?.model || '未连接'}</strong>

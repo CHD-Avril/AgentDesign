@@ -13,6 +13,7 @@ from config import Config
 from llm.base import LLMResponse
 from llm.mock_client import MockClient, ScriptedMockClient
 from server import create_server
+from tools.app_builder import AppGenerateTool
 
 
 @contextmanager
@@ -42,6 +43,54 @@ def call(base, path, method="GET", payload=None):
             return response.status, response.read().decode(), response.headers
     except urllib.error.HTTPError as error:
         return error.code, error.read().decode(), error.headers
+
+
+def test_generated_app_preview_has_isolated_origin_and_persists():
+    class PageClient:
+        name = "page-test"
+        def chat(self, *args, **kwargs):
+            return LLMResponse(content='<!doctype html><html><head><title>计数</title></head><body><button id="add">增加</button><span id="value">0</span><script>let n=0;document.getElementById("add").onclick=()=>document.getElementById("value").textContent=++n;</script></body></html>')
+    with tempfile.TemporaryDirectory() as directory:
+        with running_server(Path(directory)) as (httpd, base):
+            app = json.loads(AppGenerateTool(PageClient(), httpd.cfg.work_path()).run("可交互计数器"))
+            status, body, _ = call(base, "/v1/apps")
+            assert status == 200 and json.loads(body)["apps"][0]["id"] == app["id"]
+            status, body, headers = call(base, app["preview_url"])
+            assert status == 200 and 'id="add"' in body
+            assert "sandbox allow-scripts" in headers["Content-Security-Policy"]
+            assert "connect-src 'none'" in headers["Content-Security-Policy"]
+            assert "allow-same-origin" not in headers["Content-Security-Policy"]
+            assert headers["X-Content-Type-Options"] == "nosniff"
+            assert call(base, "/v1/apps/../../.env/preview")[0] == 404
+            target = httpd.cfg.work_path() / "generated-apps" / app["id"] / "index.html"
+            target.unlink()
+            target.symlink_to(Path(directory) / "outside.html")
+            assert call(base, app["preview_url"])[0] == 404
+
+
+def test_media_upload_serves_only_uuid_files_and_rejects_project_files():
+    with tempfile.TemporaryDirectory() as directory:
+        with running_server(Path(directory)) as (httpd, base):
+            req = urllib.request.Request(base + "/v1/uploads", data=b"test-wave-bytes", method="POST", headers={"X-File-Name": "demo.wav"})
+            with urllib.request.urlopen(req, timeout=5) as response:
+                assert response.status == 201
+                uploaded = json.loads(response.read())
+            assert uploaded["file"].startswith("media/") and uploaded["size"] == 15
+            status, body, headers = call(base, uploaded["media_url"])
+            assert status == 200 and body == "test-wave-bytes"
+            assert headers["Content-Type"] == "audio/wav" and headers["X-Content-Type-Options"] == "nosniff"
+            assert call(base, "/v1/media/../../.env")[0] == 404
+            assert call(base, "/v1/media/server.py")[0] == 404
+            target = httpd.cfg.work_path() / uploaded["file"]
+            target.unlink(); target.symlink_to(Path(directory) / "outside.wav")
+            assert call(base, uploaded["media_url"])[0] == 404
+            req = urllib.request.Request(base + "/v1/uploads", data=b"blocked", method="POST", headers={"X-File-Name": "script.html"})
+            try:
+                urllib.request.urlopen(req, timeout=5)
+            except urllib.error.HTTPError as error:
+                assert error.code == 400
+            else:
+                assert False, "不得将 HTML 当媒体上传并托管"
 
 
 def test_multiturn_history_and_restart_context():

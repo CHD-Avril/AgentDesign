@@ -205,6 +205,9 @@ class Agent:
                     for tc in response.tool_calls
                 ],
             })
+            if response.raw and response.raw.get("type") == "message":
+                # Anthropic 的 thinking 签名与工具块需原样回传，仅保留在本次运行中。
+                messages[-1]["_anthropic_content"] = response.raw.get("content", [])
 
             # ---- 并发执行所有工具调用 ----
             # 结果按 tc 顺序返回，保证消息顺序和 LLM 输出一致
