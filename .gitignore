@@ -17,3 +17,8 @@ data/
 
 # 临时文件
 *.tmp
+
+# Node.js（如果有前端项目）
+node_modules/
+runtime/
+dist/
