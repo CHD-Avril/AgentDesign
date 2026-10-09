@@ -1,7 +1,7 @@
 """装配工厂：根据配置创建 LLM 与 Agent 实例。
 
-这是“接 Qwen API”的对接点之一：有 Key 时自动用 QwenClient；
-没有 Key 时自动降级为离线 MockClient（方便先跑通流程）。
+根据 LLM_PROVIDER 选择 Qwen 或 Z.ai Anthropic；
+没有当前接口的 Key 时自动降级为离线 MockClient。
 """
 from __future__ import annotations
 
@@ -19,13 +19,17 @@ from agent.reflector import Reflector
 from agent.telemetry import Telemetry
 from config import Config
 from llm.embedding import EmbeddingClient
+from llm.anthropic_client import AnthropicClient
 from llm.mock_client import MockClient
 from llm.qwen_client import QwenClient
 from tools import default_registry
 from tools.knowledge import KnowledgeAddTool, KnowledgeListTool, KnowledgeSearchTool
 from tools.long_term_memory import ForgetTool, RecallTool, RememberTool
-from tools.multimodal import ImageGenerateTool, ImageUnderstandTool
+from tools.multimodal import AnthropicImageUnderstandTool, ImageGenerateTool, ImageUnderstandTool
 from tools.workflow import WorkflowTool
+from tools.app_builder import AppGenerateTool
+from tools.media import (MediaAPIClient, QwenMediaAPIClient, AudioTranscribeTool, TextToSpeechTool,
+                         VoiceChatTool, PodcastGenerateTool, VideoAnalyzeTool)
 
 
 def create_agent(cfg: Config, *, use_mock: bool | None = None, interactive: bool | None = None, asker=None) -> tuple[Agent, str]:
@@ -40,7 +44,13 @@ def create_agent(cfg: Config, *, use_mock: bool | None = None, interactive: bool
 
     if use_mock:
         llm = MockClient()
-        note = "离线演示模式（MockClient）：未检测到 QWEN_API_KEY，配置后自动切换真实模型。"
+        note = "离线演示模式（MockClient）：配置模型 API Key 并移除 --mock 可切换真实模型。"
+    elif cfg.provider == "zai":
+        llm = AnthropicClient(
+            api_key=cfg.api_key, base_url=cfg.base_url, model=cfg.model,
+            max_tokens=cfg.max_output_tokens, timeout=cfg.timeout, max_retries=cfg.max_retries,
+        )
+        note = f"已配置 Z.ai Anthropic 模型：{cfg.model} @ {cfg.base_url}"
     else:
         llm = QwenClient(
             api_key=cfg.api_key,
@@ -50,6 +60,7 @@ def create_agent(cfg: Config, *, use_mock: bool | None = None, interactive: bool
             timeout=cfg.timeout,
             max_retries=cfg.max_retries,
             enable_search=cfg.enable_search,
+            max_tokens=cfg.max_output_tokens,
         )
         note = f"已连接远端模型：{cfg.model} @ {cfg.base_url}"
 
@@ -71,11 +82,14 @@ def create_agent(cfg: Config, *, use_mock: bool | None = None, interactive: bool
 
     # 知识库（需要 API Key，mock 模式跳过）
     kb = None
-    if not use_mock:
+    knowledge_note = "离线演示未启用知识库。" if use_mock else "请配置独立的 EMBEDDING_API_KEY 以启用知识库。"
+    embedding_key = cfg.embedding_api_key or (cfg.api_key if cfg.provider == "qwen" else "")
+    if not use_mock and embedding_key:
         try:
             embed_client = EmbeddingClient(
-                api_key=cfg.api_key,
-                base_url=cfg.base_url,
+                api_key=embedding_key,
+                base_url=cfg.embedding_base_url,
+                model=cfg.embedding_model,
             )
             kb_path = cfg.log_path().parent / "data" / "knowledge_base.json"
             kb = KnowledgeBase(embed_client, persist_path=kb_path)
@@ -84,6 +98,7 @@ def create_agent(cfg: Config, *, use_mock: bool | None = None, interactive: bool
             tools.register(KnowledgeListTool(kb))
             note += f"；知识库已加载（{len(kb)} 块）"
         except Exception as err:
+            knowledge_note = "Embedding 服务加载失败，请检查配置。"
             note += f"；知识库加载失败（{err}）"
 
     # 长期记忆（所有模式都可用，SQLite 本地存储）
@@ -94,7 +109,9 @@ def create_agent(cfg: Config, *, use_mock: bool | None = None, interactive: bool
     tools.register(WorkflowTool(tools))
 
     # 多模态工具（需要 API Key，mock 模式跳过）
-    if not use_mock:
+    if not use_mock and cfg.provider == "zai":
+        tools.register(AnthropicImageUnderstandTool(llm, cfg.work_path()))
+    elif not use_mock:
         try:
             tools.register(ImageUnderstandTool(
                 api_key=cfg.api_key,
@@ -107,6 +124,31 @@ def create_agent(cfg: Config, *, use_mock: bool | None = None, interactive: bool
             ))
         except Exception:
             pass  # 多模态工具加载失败不影响主流程
+
+    if not use_mock:
+        tools.register(AppGenerateTool(llm, cfg.work_path(), max_tokens=max(8192, cfg.max_output_tokens), telemetry=telemetry))
+        if cfg.media_provider == "qwen":
+            media = QwenMediaAPIClient(
+                api_key=cfg.media_api_key, asr_base_url=cfg.qwen_asr_base_url,
+                tts_base_url=cfg.qwen_tts_base_url, transcribe_model=cfg.qwen_asr_model,
+                tts_model=cfg.qwen_tts_model, voice=cfg.media_voice, timeout=cfg.media_timeout,
+            )
+        else:
+            media = MediaAPIClient(
+                api_key=cfg.media_api_key, base_url=cfg.media_base_url,
+                transcribe_model=cfg.media_transcribe_model, tts_model=cfg.media_tts_model,
+                voice=cfg.media_voice, timeout=cfg.media_timeout,
+            )
+        tools.register(AudioTranscribeTool(media, cfg.work_path()))
+        tools.register(TextToSpeechTool(media, cfg.work_path()))
+        tools.register(VoiceChatTool(llm, media, cfg.work_path()))
+        tools.register(PodcastGenerateTool(llm, media, cfg.work_path()))
+        vision = llm if cfg.provider == "zai" else QwenClient(
+            cfg.api_key, cfg.base_url, cfg.vision_model, timeout=cfg.timeout,
+            max_retries=cfg.max_retries, max_tokens=cfg.max_output_tokens,
+        )
+        tools.register(VideoAnalyzeTool(vision, cfg.work_path(), media,
+                                       image_format="anthropic" if cfg.provider == "zai" else "openai"))
 
     # 记忆提取器、规划器、反思器（需要 LLM，mock 模式下跳过）
     extractor = None
@@ -147,6 +189,7 @@ def create_agent(cfg: Config, *, use_mock: bool | None = None, interactive: bool
     # 把组件挂到 agent 上，方便外部访问
     agent.telemetry = telemetry
     agent.knowledge_base = kb
+    agent.knowledge_note = knowledge_note
     agent.long_term_memory = ltm
     agent.episodic_memory = episodic  # 情景记忆
     agent.reflector = reflector      # 反思器

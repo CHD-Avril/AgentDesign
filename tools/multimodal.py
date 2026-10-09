@@ -216,3 +216,42 @@ class ImageGenerateTool(Tool):
             time.sleep(3)
             waited += 3
         return ""
+
+
+class AnthropicImageUnderstandTool(Tool):
+    """用当前 Z.ai 模型读取本地图片，按真实文件类型发送 base64 内容块。"""
+    name = "image_understand"
+    description = "理解本地 JPEG、PNG、WebP 或 GIF 图片。输入图片文件路径和问题，返回文字分析。"
+    parameters = {
+        "type": "object",
+        "properties": {
+            "image_source": {"type": "string", "description": "本地图片文件路径，相对沙箱或用户目录内的绝对路径"},
+            "question": {"type": "string", "description": "关于图片的问题"},
+        },
+        "required": ["image_source", "question"],
+    }
+
+    def __init__(self, client, work_dir: Path) -> None:
+        self.client = client
+        self.work_dir = work_dir
+
+    def run(self, image_source: str, question: str) -> str:
+        from tools.builtin import FileReadTool
+        allowed_types = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
+                         ".webp": "image/webp", ".gif": "image/gif"}
+        try:
+            path = FileReadTool(self.work_dir)._resolve(image_source)
+            mime = allowed_types.get(path.suffix.lower())
+            if mime is None:
+                return "错误：只支持 JPEG、PNG、WebP、GIF 图片。"
+            if path.stat().st_size > 10 * 1024 * 1024:
+                return "错误：图片大小不得超过 10 MB。"
+            content = [
+                {"type": "image", "source": {"type": "base64", "media_type": mime,
+                                                "data": base64.standard_b64encode(path.read_bytes()).decode("ascii")}},
+                {"type": "text", "text": question},
+            ]
+            result = self.client.chat([{"role": "user", "content": content}])
+            return f"图片分析结果：\n{result.content}"
+        except Exception as error:
+            return f"错误：图片分析失败：{error}"
