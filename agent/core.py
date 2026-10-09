@@ -143,7 +143,7 @@ class Agent:
                     response.usage, latency_ms, detail=f"turn {turn}"
                 )
                 total_cost += cost
-                total_tokens += response.usage.total
+                total_tokens += response.usage.total_tokens
 
             # ---- 模型给出最终回答 ----
             if not response.tool_calls:
